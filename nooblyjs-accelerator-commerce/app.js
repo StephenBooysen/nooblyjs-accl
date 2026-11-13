@@ -12,17 +12,29 @@ const bodyParser = require('body-parser');
 const session = require('express-session');
 const passport = require('passport');
 const path = require('path');
+const { createSearchAccess } = require('./src/shared/searchAccess');
+const { createDataAccess } = require('./src/shared/dataAccess');
+const { loadConfig } = require('./src/config');
+
+let config;
+try {
+  config = loadConfig();
+} catch (error) {
+  console.error(error.message);
+  process.exit(1);
+}
+config.warnings.forEach((warning) => console.warn(`[config] ${warning}`));
 const { EventEmitter } = require('events');
 
 // Iniitiate the Web and Api Interface
 const app = express();
-const PORT = process.env.PORT || 3003;
+const PORT = config.port;
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
 // Configure session middleware before application initialization
 app.use(session({
-  secret: 'ecommerce-secret',
+  secret: config.sessionSecret,
   resave: false,
   saveUninitialized: false,
   cookie: { secure: false }
@@ -52,11 +64,11 @@ serviceRegistry.initialize(app,eventEmitter);
 
 const log = serviceRegistry.logger('console');
 const cache = serviceRegistry.cache('memory');
-const dataserve = serviceRegistry.dataServe('memory');
+const dataserve = createDataAccess(serviceRegistry, { namespace: 'app' });
 const filing = serviceRegistry.filing('local');
 const queue = serviceRegistry.queue('memory');
 const scheduling = serviceRegistry.scheduling('memory');
-const searching = serviceRegistry.searching('memory');
+const searching = createSearchAccess(serviceRegistry, { namespace: 'app' });
 const measuring = serviceRegistry.measuring('memory');
 const notifying = serviceRegistry.notifying('memory');
 const worker = serviceRegistry.working('memory');
@@ -79,5 +91,5 @@ app.use('/api/auth', authRoutes);
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.listen(PORT, () => {
-  console.log(`Nooblyjs Wiki Server running on port ${PORT}`);
+  console.log(`NooblyJS Commerce running on port ${PORT}`);
 });

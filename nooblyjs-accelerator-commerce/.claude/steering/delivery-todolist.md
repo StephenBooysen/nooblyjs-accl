@@ -1,16 +1,26 @@
 # Delivery Management System - Implementation Todo List
 
+> **Status note (2026-11-13).** Boxes are ticked only where `src/delivery` does the item, with the file given. Items
+> that are partly built are left open and explained in `architecture.md` §6. Two calls the routes made were not
+> available in the local core and were fixed: `notifying.publish` → `notify`; `workflow.start` removed (the workflow
+> service is an HTTP client for a separate server, not configured here).
+>
+> Earlier note: the boxes had not been reconciled with the code. The delivery module already has, in
+> `src/delivery/routes/index.js`: order creation, lookup, listing and status changes; driver creation, lookup, status
+> changes and an available-drivers list; tracking by order; an analytics overview; and notifications. Not every
+> boxed item is built, and some built items are unticked. Treat the code as the record until these are ticked.
+
 ## Phase 1: Core Foundation & Order Management
 - [ ] Refactor existing delivery app structure
-- [ ] Create order management system using dataserve for order storage
+- [x] Create order management system using dataserve for order storage — `src/delivery/routes/index.js` (orders via `dataServe`); survives restart with `DATA_PROVIDER=file`
 - [ ] Implement order lifecycle status tracking (created, assigned, picked up, in-transit, delivered, failed)
 - [ ] Create order validation system (address verification, delivery zones)
 - [ ] Implement order assignment logic for drivers
-- [ ] Create basic API endpoints for order operations
-- [ ] Implement order search functionality using search service
+- [x] Create basic API endpoints for order operations — `src/delivery/routes/index.js`: `POST orders`, `GET orders/:orderId`, `GET orders`, `PATCH orders/:orderId/status`
+- [x] Implement order search functionality using search service — `routes/index.js` `GET orders?search=`; orders indexed on create and status change, index rebuilt at start (`src/delivery/index.js`)
 - [ ] Create order analytics dashboard
-- [ ] Add logging for all order operations
-- [ ] Implement caching for frequently accessed order data
+- [x] Add logging for all order operations — logger calls in every order route in `routes/index.js`
+- [x] Implement caching for frequently accessed order data — `cache.put`/`cache.get` on `order:<id>` in `routes/index.js`
 
 ## Phase 2: Driver Management System
 - [ ] Create driver registration and profile management
@@ -98,13 +108,13 @@
 
 ## Technical Infrastructure
 - [ ] Set up proper database schema design
-- [ ] Implement caching strategy using nooblyjs cache service
+- [x] Implement caching strategy using nooblyjs cache service — `cache` in `routes/index.js` (orders only)
 - [ ] Create background job processing using queueing service
 - [ ] Set up scheduled tasks using scheduling service
 - [ ] Implement file storage for documents and photos
 - [ ] Create messaging system using notifying service
 - [ ] Set up monitoring and measuring using measuring service
-- [ ] Implement search indexing using searching service
+- [x] Implement search indexing using searching service — `src/shared/searchAccess.js`; orders and products indexed and rebuilt at start
 - [ ] Create workflow automation using workflow service
 - [ ] Set up background task processing using working service
 
@@ -122,5 +132,5 @@
 
 ---
 
-*Last Updated: 2025-09-18*
-*Status: Planning Phase*
+*Last Updated: 2026-11-13*
+*Status: Build started; order management and search in place*

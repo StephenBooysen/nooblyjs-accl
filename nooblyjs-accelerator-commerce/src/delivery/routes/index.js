@@ -65,7 +65,7 @@ module.exports = (options, eventEmitter, services) => {
         scheduling: 'active',
         searching: 'active',
         notifying: 'active',
-        workflow: 'active',
+        workflow: 'not configured',
         working: 'active',
         measuring: 'active'
       }
@@ -89,6 +89,9 @@ module.exports = (options, eventEmitter, services) => {
 
       // Cache the order for quick access
       await cache.put(`order:${orderId}`, orderData);
+
+      // Index the order so search can find it
+      await searching.add('orders', orderId, { ...orderData, status: 'created' });
 
       // Queue for processing
       await queueing.enqueue('order_processing', { orderId, action: 'validate' });
@@ -154,8 +157,14 @@ module.exports = (options, eventEmitter, services) => {
         await cache.put(`order:${orderId}`, { ...cachedOrder, ...updateData });
       }
 
+      // Keep the search index in step with the stored order
+      const storedOrder = await dataServe.read('orders', orderId);
+      if (storedOrder) {
+        await searching.add('orders', orderId, storedOrder);
+      }
+
       // Notify subscribers about status change
-      await notifying.publish('order_status_update', {
+      await notifying.notify('order_status_update', {
         orderId,
         status,
         timestamp: updateData.updatedAt
@@ -215,8 +224,9 @@ module.exports = (options, eventEmitter, services) => {
         updatedAt: new Date().toISOString()
       });
 
-      // Start onboarding workflow
-      await workflow.start('driver_onboarding', { driverId });
+      // The driver onboarding workflow is not started here: the workflow service is an HTTP client for a separate
+      // workflow server (nooblyjs-core workflowApi.js), which this accelerator does not run. Until it is configured,
+      // new drivers wait in 'pending_verification'.
 
       logger.info(`Driver registered: ${driverId}`);
 
@@ -228,6 +238,21 @@ module.exports = (options, eventEmitter, services) => {
     } catch (error) {
       logger.error('Error registering driver:', error);
       res.status(500).json({ success: false, error: 'Failed to register driver' });
+    }
+  });
+
+  // Get available drivers
+  app.get(`${basePath}/drivers/available`, async (req, res) => {
+    try {
+      const drivers = await dataServe.list('drivers');
+      const availableDrivers = drivers.filter(driver =>
+        driver.status === 'available' || driver.status === 'online'
+      );
+
+      res.json({ success: true, drivers: availableDrivers });
+    } catch (error) {
+      logger.error('Error getting available drivers:', error);
+      res.status(500).json({ success: false, error: 'Failed to get available drivers' });
     }
   });
 
@@ -264,7 +289,7 @@ module.exports = (options, eventEmitter, services) => {
       await dataServe.update('drivers', driverId, updateData);
 
       // Notify about driver status change
-      await notifying.publish('driver_status_update', {
+      await notifying.notify('driver_status_update', {
         driverId,
         status,
         location,
@@ -280,20 +305,6 @@ module.exports = (options, eventEmitter, services) => {
     }
   });
 
-  // Get available drivers
-  app.get(`${basePath}/drivers/available`, async (req, res) => {
-    try {
-      const drivers = await dataServe.list('drivers');
-      const availableDrivers = drivers.filter(driver =>
-        driver.status === 'available' || driver.status === 'online'
-      );
-
-      res.json({ success: true, drivers: availableDrivers });
-    } catch (error) {
-      logger.error('Error getting available drivers:', error);
-      res.status(500).json({ success: false, error: 'Failed to get available drivers' });
-    }
-  });
 
   // ================================
   // DELIVERY TRACKING ROUTES
@@ -350,8 +361,8 @@ module.exports = (options, eventEmitter, services) => {
         timestamp: new Date().toISOString()
       };
 
-      // Store analytics metrics
-      await measuring.record('delivery_analytics', analytics);
+      // Keep a snapshot of the overview so trends can be read later
+      await dataServe.add('analytics_snapshots', analytics);
 
       res.json({ success: true, analytics });
     } catch (error) {
@@ -369,7 +380,7 @@ module.exports = (options, eventEmitter, services) => {
     try {
       const { type, recipient, message, data } = req.body;
 
-      await notifying.publish(`notification_${type}`, {
+      await notifying.notify(`notification_${type}`, {
         recipient,
         message,
         data,

@@ -1,0 +1,5 @@
+Ok, its time to think really hard about this development. I would like you to build the eCommerce application in the @src/ecommerce folder based on the PRD @".claude/specs/ecommerce-requirements.md". Please us the @.claude/learning/nooblyjs-core-usage-guide.md to leverage the noobly-services. Please based the application on a shopify theme.
+
+Ok, its time to think really hard about this development. I would like you to build the warehouse management application in the @src/warehouse folder based on the PRD @".claude/specs/warehouse-requirements.md". Please us the @.claude/learning/nooblyjs-core-usage-guide.md to leverage the noobly-services. Please create this project in the @src/warehouse folder.
+
+Ok, its time to think really hard about this development. I would like you to build the delivery application in the @src/delivery folder based on the PRD @".claude/specs/delivery-requirements.md". Please us the @.claude/learning/nooblyjs-core-usage-guide.md to leverage the noobly-services. Please create this project in the @src/delivery folder.

@@ -4,8 +4,9 @@ const bcrypt = require('bcryptjs');
 const fs = require('fs').promises;
 const path = require('path');
 
-const USERS_FILE = path.join(__dirname, '../../data/users.json');
-const GOOGLE_CONFIG = require('../../data/google-oauth-config.json');
+const { loadConfig } = require('../config');
+
+const USERS_FILE = process.env.USERS_FILE || path.join(__dirname, '../../data/users.json');
 
 async function readUsers() {
   try {
@@ -64,10 +65,16 @@ function configurePassport(passport) {
     }
   }));
 
+  // Google sign-in is optional: it is only enabled when GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set.
+  const google = loadGoogleConfig();
+  if (!google.clientId || !google.clientSecret) {
+    return finishPassport(passport);
+  }
+
   passport.use(new GoogleStrategy({
-    clientID: GOOGLE_CONFIG.web.client_id,
-    clientSecret: GOOGLE_CONFIG.web.client_secret,
-    callbackURL: GOOGLE_CONFIG.web.redirect_uris[0]
+    clientID: google.clientId,
+    clientSecret: google.clientSecret,
+    callbackURL: google.callbackUrl
   }, async (accessToken, refreshToken, profile, done) => {
     try {
       let user = await findUserByEmail(profile.emails[0].value);
@@ -89,6 +96,15 @@ function configurePassport(passport) {
     }
   }));
 
+  finishPassport(passport);
+}
+
+function loadGoogleConfig() {
+  const { google } = loadConfig({ ...process.env, NODE_ENV: process.env.NODE_ENV || 'development' });
+  return google;
+}
+
+function finishPassport(passport) {
   passport.serializeUser((user, done) => {
     done(null, user.id);
   });

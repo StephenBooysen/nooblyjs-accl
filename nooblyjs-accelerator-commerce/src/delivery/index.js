@@ -14,6 +14,8 @@
 
 'use strict';
 
+const { createSearchAccess } = require('../shared/searchAccess');
+const { createDataAccess } = require('../shared/dataAccess');
 const Routes = require('./routes');
 const Views = require('./views');
 const DataManager = require('./components/datamanager');
@@ -34,7 +36,7 @@ module.exports = (options, eventEmitter, serviceRegistry) => {
 
   // Initialize core services for delivery management
   const dataManager = new DataManager('./data');
-  const dataServe = serviceRegistry.dataServe('memory'); // JSON document storage for orders, drivers, etc.
+  const dataServe = createDataAccess(serviceRegistry, { namespace: 'delivery' }); // JSON document storage for orders, drivers, etc.
   const filing = serviceRegistry.filing('local', {
     baseDir: `./${app_path}-files`
   });
@@ -42,7 +44,7 @@ module.exports = (options, eventEmitter, serviceRegistry) => {
   const logger = serviceRegistry.logger('console');
   const queueing = serviceRegistry.queue('memory'); // Task queue for order processing
   const scheduling = serviceRegistry.scheduling('memory'); // Task scheduling for deliveries
-  const searching = serviceRegistry.searching('memory'); // Full-text search for orders/drivers
+  const searching = createSearchAccess(serviceRegistry, { namespace: 'delivery' }); // Full-text search for orders/drivers
   const notifying = serviceRegistry.notifying('memory'); // Pub/sub for real-time updates
   const workflow = serviceRegistry.workflow('memory'); // Multi-step workflows (onboarding, delivery)
   const working = serviceRegistry.working('memory'); // Background tasks
@@ -65,6 +67,13 @@ module.exports = (options, eventEmitter, serviceRegistry) => {
   };
 
   // Register routes and views with all services
+  // The search index is in memory, so rebuild it from the stored orders at start-up (the store survives a restart
+  // when DATA_PROVIDER=file).
+  dataServe.list('orders')
+    .then((orders) => Promise.all(orders.map((order) => searching.add('orders', order.id, order))))
+    .then((orders) => logger.info(`Delivery search index rebuilt: ${orders.length} orders`))
+    .catch((error) => logger.error('Failed to rebuild delivery search index:', error));
+
   Routes(options, eventEmitter, services);
   Views(options, eventEmitter, services);
 

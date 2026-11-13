@@ -14,6 +14,8 @@
 
 'use strict';
 
+const { createSearchAccess } = require('../shared/searchAccess');
+const { createDataAccess } = require('../shared/dataAccess');
 const Routes = require('./routes');
 const Views = require('./views');
 const DataManager = require('./components/datamanager');
@@ -38,14 +40,14 @@ module.exports = (options, eventEmitter, serviceRegistry) => {
   const app_path = options.path || 'warehouse';
 
   // Initialize NooblyJS Core services
-  const dataServe = serviceRegistry.dataServe('memory');
+  const dataServe = createDataAccess(serviceRegistry, { namespace: 'warehouse' });
   const filing = serviceRegistry.filing('local', {
     baseDir: `./${app_path}-files`
   });
   const cache = serviceRegistry.cache('memory');
   const logger = serviceRegistry.logger('console');
   const queue = serviceRegistry.queue('memory');
-  const search = serviceRegistry.searching('memory');
+  const search = createSearchAccess(serviceRegistry, { namespace: 'warehouse' });
   const measuring = serviceRegistry.measuring('memory');
   const workflow = serviceRegistry.workflow('memory');
 

@@ -137,3 +137,8 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Credentials and runtime data (never commit)
+data/google-oauth-config.json
+data/users.json
+data/store/

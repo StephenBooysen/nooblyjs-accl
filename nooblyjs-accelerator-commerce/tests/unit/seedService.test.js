@@ -13,6 +13,8 @@ describe('SeedService', () => {
       dataServe: {
         jsonFind: jest.fn(),
         jsonFindAll: jest.fn(),
+        jsonFindByCriteria: jest.fn().mockResolvedValue([]),
+        jsonFindByPath: jest.fn().mockResolvedValue([]),
         add: jest.fn(),
         createContainer: jest.fn()
       },
@@ -21,7 +23,11 @@ describe('SeedService', () => {
         error: jest.fn()
       },
       search: {
-        addToIndex: jest.fn()
+        addToIndex: jest.fn(),
+        index: jest.fn().mockResolvedValue(),
+      },
+      notifying: {
+        notify: jest.fn().mockResolvedValue()
       }
     };
 
@@ -30,23 +36,26 @@ describe('SeedService', () => {
 
   describe('createAdminUser', () => {
     it('should create admin user successfully', async () => {
-      mockServices.dataServe.jsonFind.mockResolvedValue([]);
+      mockServices.dataServe.jsonFindByCriteria.mockResolvedValue([]);
       mockServices.dataServe.add.mockResolvedValue('admin-id-123');
 
       await seedService.createAdminUser();
 
       expect(mockServices.dataServe.add).toHaveBeenCalledWith('users', expect.objectContaining({
         email: 'admin@ecommerce.com',
-        role: 'admin',
-        isActive: true
+        isAdmin: true,
+        status: 'active'
       }));
+      const stored = mockServices.dataServe.add.mock.calls[0][1];
+      expect(stored.password).not.toBe('admin123');
+      expect(stored.password).toMatch(/^\$2[aby]\$/);
       expect(mockServices.logger.info).toHaveBeenCalledWith(
         expect.stringContaining('Admin user created')
       );
     });
 
     it('should skip creation if admin already exists', async () => {
-      mockServices.dataServe.jsonFind.mockResolvedValue([{ id: 'existing-admin' }]);
+      mockServices.dataServe.jsonFindByCriteria.mockResolvedValue([{ id: 'existing-admin' }]);
 
       await seedService.createAdminUser();
 

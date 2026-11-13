@@ -57,22 +57,32 @@ class SeedService {
   }
 
   /**
-   * Create admin user
+   * Create the first admin user.
+   *
+   * The password comes from COMMERCE_ADMIN_PASSWORD. If that is not set, a random one is generated and shown once in
+   * the log, so no password is ever written in the source. The email comes from COMMERCE_ADMIN_EMAIL.
    */
   async createAdminUser() {
     try {
       const bcrypt = require('bcryptjs');
+      const crypto = require('crypto');
 
       const existingAdmins = await this.dataServe.jsonFindByCriteria('users', { isAdmin: true });
       if (existingAdmins.length > 0) {
-        this.logger.info('Admin user already exists');
+        this.logger.info('Admin user already exists, skipping creation');
         return;
       }
 
-      const hashedPassword = await bcrypt.hash('admin123', 10);
+      const email = process.env.COMMERCE_ADMIN_EMAIL || 'admin@ecommerce.com';
+      let password = process.env.COMMERCE_ADMIN_PASSWORD;
+      const generated = !password;
+      if (generated) {
+        password = crypto.randomBytes(12).toString('base64url');
+      }
+      const hashedPassword = await bcrypt.hash(password, 10);
 
       const adminUser = {
-        email: 'admin@ecommerce.com',
+        email,
         password: hashedPassword,
         firstName: 'Admin',
         lastName: 'User',
@@ -85,6 +95,9 @@ class SeedService {
 
       const adminUuid = await this.dataServe.add('users', adminUser);
       this.logger.info(`Admin user created: ${adminUser.email} (${adminUuid})`);
+      if (generated) {
+        this.logger.info(`Generated admin password (shown once; set COMMERCE_ADMIN_PASSWORD to choose it): ${password}`);
+      }
 
       return adminUuid;
     } catch (error) {
@@ -105,7 +118,9 @@ class SeedService {
           const product = await this.productService.createProduct(productData, 'system');
           this.logger.info(`Sample product created: ${product.name}`);
         } catch (error) {
+          // Seeding fails loudly: a sample that cannot be written is a problem, not something to skip.
           this.logger.error(`Error creating sample product ${productData.name}:`, error);
+          throw error;
         }
       }
 
@@ -431,13 +446,14 @@ class SeedService {
       const containers = ['products', 'categories', 'users'];
       for (const container of containers) {
         try {
-          const items = await this.dataServe.jsonFind(container, () => true);
+          const items = await this.dataServe.jsonFindAll(container);
           status[container] = items.length;
         } catch (error) {
           status[container] = 0;
         }
       }
 
+      status.isSeeded = containers.every((container) => status[container] > 0);
       return status;
     } catch (error) {
       this.logger.error('Error getting seeding status:', error);

@@ -7,6 +7,8 @@
 
 'use strict';
 
+const { createSearchAccess } = require('../shared/searchAccess');
+const { createDataAccess } = require('../shared/dataAccess');
 const Routes = require('./routes');
 const Views = require('./views');
 const DataManager = require('./components/datamanager');
@@ -27,14 +29,14 @@ module.exports = (options, eventEmitter, serviceRegistry) => {
   const dataManager = new DataManager('./data');
 
   // Get all required services from service registry
-  const dataServe = serviceRegistry.dataServe('memory');
+  const dataServe = createDataAccess(serviceRegistry, { namespace: 'ecommerce' });
   const filing = serviceRegistry.filing('local', {
     baseDir: `./${app_path}-files`
   });
   const cache = serviceRegistry.cache('memory');
   const logger = serviceRegistry.logger('console');
   const queue = serviceRegistry.queue('memory');
-  const search = serviceRegistry.searching('memory');
+  const search = createSearchAccess(serviceRegistry, { namespace: 'ecommerce' });
   const notifying = serviceRegistry.notifying('memory');
   const measuring = serviceRegistry.measuring('memory');
   const workflow = serviceRegistry.workflow('memory');
@@ -77,6 +79,12 @@ module.exports = (options, eventEmitter, serviceRegistry) => {
   });
 
   // Register routes and views
+  // The search index is in memory, so rebuild it from the stored products at start-up.
+  dataServe.list('products')
+    .then((products) => Promise.all(products.map((product) => search.index('products', product.id, product))))
+    .then((products) => logger.info(`Product search index rebuilt: ${products.length} products`))
+    .catch((error) => logger.error('Failed to rebuild product search index:', error));
+
   Routes(options, eventEmitter, services);
   Views(options, eventEmitter, services);
 

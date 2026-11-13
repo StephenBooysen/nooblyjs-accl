@@ -213,8 +213,8 @@ class ResourceModule {
 
       // Record performance metrics
       await this.measuring.increment('tasks_completed');
-      await this.measuring.record('task_duration', actualDuration);
-      await this.measuring.record('task_efficiency',
+      await this.measuring.histogram('task_duration', actualDuration);
+      await this.measuring.histogram('task_efficiency',
         (assignment.estimatedDuration / actualDuration) * 100);
 
       this.eventEmitter.emit('task.completed', {
