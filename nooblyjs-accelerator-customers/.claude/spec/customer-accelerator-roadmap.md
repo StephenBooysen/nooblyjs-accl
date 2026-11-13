@@ -29,26 +29,26 @@ Estimates assume one to two developers. Each phase ends in a tagged release, wit
 
 **Fix the current scaffold.** These issues were found in the repo as of `cb05aa1`:
 
-- [ ] `app.js` calls `serviceRegistry.dataServe('memory')`, which does not exist in core (`dataService`). Startup throws.
-- [ ] All three module `index.js` files default `app_path` to `'warehouse'`. Their routes default to `'delivery'` (copy-paste from accel-commerce). Views for customer, marketing and support all mount on `/applications/warehouse`.
-- [ ] Each module uses its own `DataManager` (raw `fs` JSON files in `./data`), which bypasses core `dataService`. Replace it with the repository layer.
-- [ ] `package.json`: `main` points at `app.js` (a server). Change it to `index.js` (library). Rename the package to `nooblyjs-accel-customers`. Add `files`, `engines`, and a `peerDependencies` entry on `nooblyjs-core`.
-- [ ] Hard-coded session secret `'ecommerce-secret'` and a debug `patchEmitter` that logs every event payload, which leaks PII to the console.
-- [ ] Local `src/auth` duplicates core `authservice`. Retire it and depend on the host session + core API keys.
-- [ ] `activities/keepalive.js` stubs (`console.log("Alive")`). Remove them.
+- [x] `app.js` calls `serviceRegistry.dataServe('memory')`, which does not exist in core (`dataService`). Startup throws.
+- [x] All three module `index.js` files default `app_path` to `'warehouse'`. Their routes default to `'delivery'` (copy-paste from accel-commerce). Views for customer, marketing and support all mount on `/applications/warehouse`.
+- [x] Each module uses its own `DataManager` (raw `fs` JSON files in `./data`), which bypasses core `dataService`. Replace it with the repository layer.
+- [x] `package.json`: `main` points at `app.js` (a server). Change it to `index.js` (library). Rename the package to `nooblyjs-accel-customers`. Add `files`, `engines`, and a `peerDependencies` entry on `nooblyjs-core`.
+- [x] Hard-coded session secret `'ecommerce-secret'` and a debug `patchEmitter` that logs every event payload, which leaks PII to the console.
+- [x] Local `src/auth` duplicates core `authservice`. Retire it and depend on the host session + core API keys.
+- [x] `activities/keepalive.js` stubs (`console.log("Alive")`). Remove them.
 
 **Build the shared foundation:**
 
-- [ ] `index.js` → `mount(app, eventEmitter, serviceRegistry, options)` and `shutdown()`. Move `app.js` to `examples/host-app.js`.
-- [ ] `src/shared/schema`: `defineSchema()`, validation, defaults, PII masking, enum handling, OpenAPI generation.
-- [ ] `src/shared/repository`: `BaseRepository` (create/get/update/softDelete/list), `IndexManager` (secondary + unique indexes on core cache), `QueryEngine` (filter/sort/paginate DSL), `Counter` (human-readable numbers).
-- [ ] `src/shared/events`: `DomainEventBus` (EventEmitter + core `notifying` topics, standard envelope, correlation ids).
-- [ ] `src/shared/audit`: append-only `AuditService` with redacted diffs.
-- [ ] `src/shared/rbac`: roles, permissions, `requirePermission()` middleware, role resolver option.
-- [ ] `src/shared/http`: list-query parser, ETag/If-Match, error mapping to core `ClientError` / `sendSafeError`.
-- [ ] Jest setup, a mock/in-memory `ServiceRegistry` helper, and CI (Node 22/24, coverage gate).
+- [x] `index.js` → `mount(app, eventEmitter, serviceRegistry, options)` and `shutdown()`. The demo host is `test/app/index.js` (the old `app.js` was moved there).
+- [x] `src/shared/schema`: `defineSchema()`, validation, defaults, PII masking, enum handling, OpenAPI generation.
+- [x] `src/shared/repository`: `BaseRepository` (create/get/update/softDelete/list), `IndexManager` (secondary + unique indexes on core cache), `QueryEngine` (filter/sort/paginate DSL), `Counter` (human-readable numbers).
+- [x] `src/shared/events`: `DomainEventBus` (EventEmitter + core `notifying` topics, standard envelope, correlation ids).
+- [x] `src/shared/audit`: append-only `AuditService` with redacted diffs.
+- [x] `src/shared/rbac`: roles, permissions, `requirePermission()` middleware, role resolver option.
+- [x] `src/shared/http`: list-query parser, ETag/If-Match, error mapping to core `ClientError` / `sendSafeError`.
+- [x] Jest setup, a mock/in-memory `ServiceRegistry` helper, and CI (Node 22/24, coverage gate).
 
-**Exit criteria:** `examples/host-app.js` boots. `GET /applications/customer/api/v1/health` returns OK. BaseRepository has ≥ 90% coverage. `mount()` + `shutdown()` leaves no open handles.
+**Exit criteria:** the demo host (`test/app/index.js`) boots. `GET /applications/customer/api/v1/health` returns OK. BaseRepository has ≥ 90% coverage. `mount()` + `shutdown()` leaves no open handles.
 
 ---
 
@@ -56,16 +56,16 @@ Estimates assume one to two developers. Each phase ends in a tagged release, wit
 
 **PRD:** PL-1–6, PL-8, PL-10, PL-12, PL-16, CU-1–3, CU-5–8, CU-11.
 
-- [ ] Schemas and repositories: `Customer`, `Organization`, `Address`, `Phone`, `Email`, `Identity`, `ConsentRecord`, `Note`, `AuditEntry`.
-- [ ] `CustomerService`: CRUD, lifecycle/status transitions, primary contact-point management, `upsertByIdentity()`.
-- [ ] `ContactPointService`: E.164 normalisation (a small embedded country-code table, or `libphonenumber-js` as an optional dependency), email normalisation, ISO country validation, one-primary-per-type rule.
-- [ ] `IdentityService`: link and lookup by `(namespace, value)`, unique index.
-- [ ] `ConsentService`: append-only ledger, `getConsentState(customerId)`, `canContact(customerId, purpose, channel, topic)`. Phase 2's send pipeline depends on this.
-- [ ] Lookup and typeahead via a core `searching` index. `GET /customers/lookup`.
-- [ ] `TimelineService` (v1: query-time merge of notes, consent, audit; later modules register timeline providers).
-- [ ] REST routes and Swagger for all of the above. `expand` support.
-- [ ] Seed generator: 500 customers, 50 orgs, mixed contact points and consents.
-- [ ] Admin UI: customer search, customer 360 (profile, contact points, consent, timeline).
+- [x] Schemas and repositories: `Customer`, `Organization`, `Address`, `Phone`, `Email`, `Identity`, `ConsentRecord`, `Note`, `AuditEntry`.
+- [x] `CustomerService`: CRUD, lifecycle/status transitions, primary contact-point management, `upsertByIdentity()`.
+- [x] `ContactPointService`: E.164 normalisation (a small embedded country-code table, or `libphonenumber-js` as an optional dependency), email normalisation, ISO country validation, one-primary-per-type rule.
+- [x] `IdentityService`: link and lookup by `(namespace, value)`, unique index.
+- [x] `ConsentService`: append-only ledger, `getConsentState(customerId)`, `canContact(customerId, purpose, channel, topic)`. Phase 2's send pipeline depends on this.
+- [x] Lookup and typeahead via a core `searching` index. `GET /customers/lookup`.
+- [x] `TimelineService` (v1: query-time merge of notes, consent, audit; later modules register timeline providers).
+- [x] REST routes and Swagger for all of the above. `expand` support.
+- [x] Seed generator: 500 customers, 50 orgs, mixed contact points and consents.
+- [x] Admin UI: customer search, customer 360 (profile, contact points, consent, timeline).
 
 **Exit criteria:** PRD scenario 1 (commerce upsert) passes as an integration test. Swapping `providers.data` to `file` passes the same suite.
 
@@ -75,23 +75,23 @@ Estimates assume one to two developers. Each phase ends in a tagged release, wit
 
 **PRD:** MK-1 (email, SMS), MK-2–9, MK-13, MK-7 (click/unsub/bounce).
 
-- [ ] Schemas and repositories: `Template`, `Campaign`, `Message`, `Variant` (single variant only), `Communication`, `EngagementEvent`, `TrackingLink`, `SuppressionEntry`, `ChannelConfig`, `SubscriptionTopic`.
-- [ ] `ChannelAdapter` base, plus a `console` adapter (dev) and an `smtp` adapter (`nodemailer` as an optional dependency, or a host-supplied transport).
-- [ ] Safe template renderer (Mustache subset, declared variables only, locale fallback, HTML sanitisation on save).
-- [ ] `SendPipeline`:
+- [x] Schemas and repositories: `Template`, `Campaign`, `Message`, `Variant` (single variant only), `Communication`, `EngagementEvent`, `TrackingLink`, `SuppressionEntry`, `ChannelConfig`, `SubscriptionTopic`.
+- [x] `ChannelAdapter` base, plus a `console` adapter (dev) and an `smtp` adapter (`nodemailer` as an optional dependency, or a host-supplied transport).
+- [x] Safe template renderer (Mustache subset, declared variables only, locale fallback, HTML sanitisation on save).
+- [x] `SendPipeline`:
   - audience resolution (explicit ids + simple rule; full segments come in Phase 4);
   - policy checks (do-not-contact, consent, suppression, frequency cap, quiet hours → defer);
   - render → dispatch through core `queue` + `working` workers;
   - throttling;
   - idempotent per `(messageId, customerId)`.
-- [ ] Scheduling of messages via core `scheduling` (at / cron / immediate). Pause and cancel.
-- [ ] `sendTransactional()` in-process API + `POST /transactional`.
-- [ ] Tracking: signed tokens, click redirect (no open redirect), open pixel, `List-Unsubscribe` + one-click unsubscribe endpoint → ConsentRecord + SuppressionEntry.
-- [ ] Generic webhook ingestion endpoint with an adapter-specific `parseWebhook()` / `verifySignature()`.
-- [ ] Customer timeline provider: communications + engagement.
-- [ ] Admin UI: templates (editor + preview), campaigns/messages (create, schedule, test send), communications log per customer.
+- [x] Scheduling of messages via core `scheduling` (at / cron / immediate). Pause and cancel.
+- [x] `sendTransactional()` in-process API + `POST /transactional`.
+- [x] Tracking: signed tokens, click redirect (no open redirect), open pixel, `List-Unsubscribe` + one-click unsubscribe endpoint → ConsentRecord + SuppressionEntry.
+- [x] Generic webhook ingestion endpoint with an adapter-specific `parseWebhook()` / `verifySignature()`.
+- [x] Customer timeline provider: communications + engagement.
+- [x] Admin UI: templates (editor + preview), campaigns/messages (create, schedule, test send), communications log per customer.
 
-**Exit criteria:** PRD scenarios 2 and 3 pass end-to-end with the console adapter. A property-based test proves zero sends to opted-out or suppressed recipients.
+**Exit criteria:** PRD scenarios 2 and 3 pass end-to-end with the console adapter. A property-based test proves zero sends to opted-out or suppressed recipients. **Not built yet:** no property-based test exists; `tests/scenario/marketing.test.js` covers the scenarios.
 
 ---
 

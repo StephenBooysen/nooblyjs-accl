@@ -12,19 +12,17 @@ Ground rules for every phase:
   screen-reader usable, and its numbers come from records (no hard-coded totals).
 - `npm test` stays green and offline. New routes get permission tests; new operation types get crash-and-recover tests.
 
-## Where we start (2026-10-20)
+## Where we started (2026-10-20)
 
-The repo holds a seeded hosted app whose **loading contract we keep** (`register()`, the host capabilities, the
-HostedApp description, FsStore records, the error shape, the UI module + frame, live redraw, `node:test` with a
-stand-in host) and whose **domain we replace** (infrastructure designs, environments, provisioning runs, drift,
-blueprints, policies, approvals). Known gaps in the seed:
+Historical. The repo held a seeded hosted app whose **loading contract we kept** (`register()`, the host capabilities,
+the HostedApp description, FsStore records, the error shape, the UI module + frame, live redraw, `node:test` with a
+stand-in host) and whose **domain we replaced** (infrastructure designs, environments, provisioning runs, drift,
+blueprints, policies, approvals). The gaps listed there were closed in phase 0 (items 0.2, 0.5 and 0.6):
 
-- `package.json` is named `nooblyjs-ai-infrastructure` and its `start`/`seed` scripts run `server.js`, which doesn't
-  exist.
-- `README.md` describes an older cloud micro-service; `CLAUDE.md` describes the NooblyJS AI app and points at files that
-  aren't here (`.claude/steering/nooblyjs-ai.md`, `stack.md`, `structure.md`, `docs/roadmap-history.md`).
-- The page fallback route `'/{*rest}'` is Express 5 only; the launcher (`../app.js`) runs Express 4 and does not
-  build a `host` yet. (The seed was written against the NooblyJS AI host, which is only an example of a launcher.)
+- The package was named `nooblyjs-ai-infrastructure` with scripts that ran a missing `server.js`; now
+  `nooblyjs-accelerator-infrastructure`, with `server.js` present.
+- `README.md` and `CLAUDE.md` described the older product; both now describe Noobly Cloud.
+- The `'/{*rest}'` fallback route was Express 5 only; it is now a middleware (§3.4).
 
 ---
 
@@ -39,7 +37,7 @@ Goal: the seeded contract, with this product's name, nav and empty pages, loaded
 - [x] 0.5 Express 4/5 compatibility: replace `'/{*rest}'` with the fallback middleware (§3.4); run the suite under both majors.
 - [x] 0.6 Load the accelerator from the launcher `../app.js` via `register()` (using `createDevLauncher()` until the launcher builds its own host). Proven by `test/launcher.test.js` (CommonJS, Express 4, real nooblyjs-core).
 - [ ] 0.6a Agree one entry-point convention for all accelerators with the launcher's owner (architecture O8): `nooblyjs-accelerator-customers` uses `mount()`.
-- [ ] 0.6b Make `../app.js` runnable: ~~it calls `serviceRegistry.dataServe()`~~ (fixed: `dataService()`); the monorepo root has no `node_modules` and doesn't list `passport`, which it requires.
+- [ ] 0.6b Make `../app.js` runnable: the `dataService()` call is fixed; `app.js` still requires `passport`, which the monorepo root `package.json` doesn't list and its `node_modules` doesn't contain (`Cannot find module 'passport'`).
 - [x] 0.7 `infrastructure.css` skeleton: scoped, app tokens for cloud and engine badges (§11.4).
 
 **Exit check:** `npm test` green on Express 4 and 5; both `npm start` and the launcher (`../app.js`) show the five nav

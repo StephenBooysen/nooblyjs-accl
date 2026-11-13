@@ -3,6 +3,12 @@
 How the accelerator is built. What it does and for whom is `product.md`; the build order is `roadmap.md`. Section
 numbers here are referred to from both.
 
+> **Status note.** This is the target design. What is built is marked in `roadmap.md`: the launcher contract, the mock
+> provider, records, operations, jobs, secrets, catalogue, VM API and screens are in the code. Several paths named below
+> do not exist yet and belong to unticked roadmap items, for example `src/services/engines/mongodb-vm.js` (5.7),
+> `src/shared/utils/routePattern.js` (§ on wildcard routes names it; it was not created, and the fallback middleware in `index.js` is used instead).
+> Where this document and the code disagree about something already built, the code is right and this file gets fixed.
+
 ## 1. Shape in one picture
 
 ```

@@ -44,7 +44,7 @@ starts empty):
 ```bash
 npm start            # http://localhost:3003/applications/customer/
 npm test             # Jest
-npm run coverage     # Jest with the coverage gate used in CI
+npm run coverage     # Jest with the coverage gate (coverageThreshold in package.json)
 ```
 
 `nooblyjs-core` is a peer dependency. In development it is linked from the sibling directory
