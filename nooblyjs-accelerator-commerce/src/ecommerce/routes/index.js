@@ -28,7 +28,7 @@ module.exports = (options, eventEmitter, services) => {
   // ===== PUBLIC API ENDPOINTS =====
 
   // System status
-  app.get(`/applications/${app_path}/api/status`, (req, res) => {
+  app.get(`/applications/commerce/${app_path}/api/status`, (req, res) => {
     res.json({
       status: 'running',
       application: 'eCommerce Platform',

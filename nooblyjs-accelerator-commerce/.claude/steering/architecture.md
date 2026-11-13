@@ -10,10 +10,10 @@ auth router:
 
 | Mount | Source | What |
 | --- | --- | --- |
-| `/applications/warehouse/…` | `src/warehouse/` | Warehouse screens and API |
-| `/applications/ecommerce/…` | `src/ecommerce/` | Storefront, admin screens and API |
-| `/applications/delivery/…` | `src/delivery/` | Delivery dashboard, driver, tracking, analytics screens and API |
-| `/api/auth/…` | `src/auth/routes.js` | Passport local and (optional) Google sign-in |
+| `/applications/commerce/warehouse/…` | `src/warehouse/` | Warehouse screens and API |
+| `/applications/commerce/ecommerce/…` | `src/ecommerce/` | Storefront, admin screens and API |
+| `/applications/commerce/delivery/…` | `src/delivery/` | Delivery dashboard, driver, tracking, analytics screens and API |
+| `/applications/commerce/api/auth/…` | `src/auth/routes.js` | Passport local and (optional) Google sign-in |
 | `/` | `public/` | Static files (`styles.css`) |
 
 Each module is a function `(options, eventEmitter, serviceRegistry)`. It registers its API routes and its views. Modules
@@ -65,7 +65,7 @@ Two mechanisms, split by who calls:
 - **Passport sessions** for people using the storefront and the sign-in pages: `src/auth/passport-config.js` (local
   strategy with bcrypt, and Google when configured). Users are read from `data/users.json`, or from `USERS_FILE` when
   it is set. The session cookie is signed with `SESSION_SECRET`.
-- **JWT bearer tokens** for API clients: `POST /applications/ecommerce/api/auth/login` returns a token signed with
+- **JWT bearer tokens** for API clients: `POST /applications/commerce/ecommerce/api/auth/login` returns a token signed with
   `JWT_SECRET`, and admin routes check it (`requireAuth`, then `requireAdmin` for admin-only routes). Requests without a
   token get `401`.
 
@@ -154,7 +154,7 @@ Checked against the code and by running the server:
 
 ## 7. Conventions
 
-- Routes are registered with a template-string prefix: ``app.get(`/applications/${app_path}/api/...`)``. The
+- Routes are registered with a template-string prefix: ``app.get(`/applications/commerce/${app_path}/api/...`)``. The
   `app_path` option defaults to the module name.
 - Services are passed in through `serviceRegistry`; modules do not create their own storage.
 - Configuration is read through `src/config.js`, not directly from `process.env` in new code.

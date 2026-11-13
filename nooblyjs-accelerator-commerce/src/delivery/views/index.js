@@ -34,28 +34,28 @@ module.exports = (options, eventEmitter, services) => {
   const { logger } = services;
 
   // Serve static files for the delivery management application
-  app.use(`/applications/${app_path}`, express.static(path.join(__dirname)));
+  app.use(`/applications/commerce/${app_path}`, express.static(path.join(__dirname)));
 
   // Main dashboard route
-  app.get(`/applications/${app_path}`, (req, res) => {
+  app.get(`/applications/commerce/${app_path}`, (req, res) => {
     res.sendFile(path.join(__dirname, 'dashboard.html'));
   });
 
   // Driver interface route
-  app.get(`/applications/${app_path}/driver`, (req, res) => {
+  app.get(`/applications/commerce/${app_path}/driver`, (req, res) => {
     res.sendFile(path.join(__dirname, 'driver.html'));
   });
 
   // Customer tracking route
-  app.get(`/applications/${app_path}/tracking`, (req, res) => {
+  app.get(`/applications/commerce/${app_path}/tracking`, (req, res) => {
     res.sendFile(path.join(__dirname, 'tracking.html'));
   });
 
   // Analytics dashboard route
-  app.get(`/applications/${app_path}/analytics`, (req, res) => {
+  app.get(`/applications/commerce/${app_path}/analytics`, (req, res) => {
     res.sendFile(path.join(__dirname, 'analytics.html'));
   });
 
   // Log that delivery management views are registered
-  logger.info(`Delivery Management System views registered successfully at /applications/${app_path}`);
+  logger.info(`Delivery Management System views registered successfully at /applications/commerce/${app_path}`);
 };

@@ -14,7 +14,7 @@ module.exports = (ctx) => {
   // ===== USER API =====
 
   // User registration
-  app.post(`/applications/${app_path}/api/auth/register`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/auth/register`, async (req, res) => {
     try {
       const { email, password, firstName, lastName, phone } = req.body;
 
@@ -63,7 +63,7 @@ module.exports = (ctx) => {
   });
 
   // User login
-  app.post(`/applications/${app_path}/api/auth/login`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/auth/login`, async (req, res) => {
     try {
       const { email, password } = req.body;
 
@@ -102,7 +102,7 @@ module.exports = (ctx) => {
   });
 
   // Get user profile
-  app.get(`/applications/${app_path}/api/user/profile`, requireAuth, async (req, res) => {
+  app.get(`/applications/commerce/${app_path}/api/user/profile`, requireAuth, async (req, res) => {
     try {
       const user = { ...req.user };
       delete user.password;
@@ -114,7 +114,7 @@ module.exports = (ctx) => {
   });
 
   // Update user profile
-  app.put(`/applications/${app_path}/api/user/profile`, requireAuth, async (req, res) => {
+  app.put(`/applications/commerce/${app_path}/api/user/profile`, requireAuth, async (req, res) => {
     try {
       const { firstName, lastName, phone } = req.body;
 

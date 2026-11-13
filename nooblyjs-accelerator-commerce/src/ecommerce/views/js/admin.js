@@ -5,7 +5,7 @@
 
 class AdminDashboard {
   constructor() {
-    this.apiBase = '/applications/ecommerce/api';
+    this.apiBase = '/applications/commerce/ecommerce/api';
     this.currentSection = 'overview';
     this.currentUser = null;
     this.authToken = localStorage.getItem('adminToken') || null;

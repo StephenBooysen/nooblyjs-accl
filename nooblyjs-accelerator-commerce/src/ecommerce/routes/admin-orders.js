@@ -12,7 +12,7 @@ module.exports = (ctx) => {
 } = ctx;
 
   // Admin Orders API
-  app.get(`/applications/${app_path}/api/admin/orders`, requireAuth, requireAdmin, async (req, res) => {
+  app.get(`/applications/commerce/${app_path}/api/admin/orders`, requireAuth, requireAdmin, async (req, res) => {
     try {
       const { status, page = 1, limit = 50 } = req.query;
 
@@ -46,7 +46,7 @@ module.exports = (ctx) => {
     }
   });
 
-  app.put(`/applications/${app_path}/api/admin/orders/:id/status`, requireAuth, requireAdmin, async (req, res) => {
+  app.put(`/applications/commerce/${app_path}/api/admin/orders/:id/status`, requireAuth, requireAdmin, async (req, res) => {
     try {
       const { status, trackingNumber } = req.body;
 
@@ -99,7 +99,7 @@ module.exports = (ctx) => {
   });
 
   // Process refund
-  app.post(`/applications/${app_path}/api/admin/orders/:id/refund`, requireAuth, requireAdmin, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/admin/orders/:id/refund`, requireAuth, requireAdmin, async (req, res) => {
     try {
       const { amount, reason } = req.body;
 

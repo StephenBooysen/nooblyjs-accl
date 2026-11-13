@@ -28,7 +28,8 @@ import { withWords } from './src/services/event-words.js';
 import { seed as seedStory } from './src/seed/index.js';
 
 const NAME = 'infrastructure';
-const MOUNT = /^\/[a-z0-9][a-z0-9-]{0,62}$/;
+// A mount path is /<name>, or /applications/<name> when the launcher hosts every accelerator under /applications.
+const MOUNT = /^\/(applications\/)?[a-z0-9][a-z0-9-]{0,62}$/;
 const { version: VERSION } = JSON.parse(fs.readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
 const NEEDS = ['express', 'auth', 'requireRole', 'can', 'audit', 'events', 'store', 'people', 'service', 'frame'];
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
@@ -72,7 +73,7 @@ export async function register(app, serverManager, {
   // Check everything before mounting anything, so a failed start leaves nothing half-mounted (architecture.md §3.1).
   if (typeof app?.use !== 'function') throw new Error("nooblyjs-accelerator-infrastructure needs the launcher's Express app.");
   if (!serverManager?.initialized) throw new Error('nooblyjs-accelerator-infrastructure needs an initialised serverManager (the launcher initialises it).');
-  if (!MOUNT.test(mountPath ?? '')) throw new Error(`mountPath must look like /infrastructure, not ${JSON.stringify(mountPath)}`);
+  if (!MOUNT.test(mountPath ?? '')) throw new Error(`mountPath must look like /infrastructure or /applications/infrastructure, not ${JSON.stringify(mountPath)}`);
   if (!dataDir) throw new Error('nooblyjs-accelerator-infrastructure needs a dataDir.');
   const missing = NEEDS.filter((key) => !host?.[key]);
   if (missing.length) throw new Error(`nooblyjs-accelerator-infrastructure needs host.${missing.join(', host.')} from the launcher.`);

@@ -1,72 +1,98 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700;800&family=Figtree:wght@400;500;600;700&display=swap');
 
 /*
 =============================================================================
-UNIFIED BOOTSTRAP 5 COMPATIBLE STYLESHEET
+NOOBLYJS BRAND STYLESHEET
 =============================================================================
-Consolidated styles for all NooblyJS Commerce applications
-Compatible with Bootstrap 5 design system and utilities
+Design tokens from the NooblyJS design system (nooblyjs/styling/styles.css and
+nooblyjs/branding/noobly-design-brief.md). Bootstrap-style variable names are
+kept so existing screens keep their layout; their values now come from the brand.
 =============================================================================
 */
 
 /* ===== CSS CUSTOM PROPERTIES ===== */
 :root {
-  /* Color System - Bootstrap 5 Compatible */
-  --bs-primary: #0d6efd;
-  --bs-primary-rgb: 13, 110, 253;
-  --bs-secondary: #6c757d;
-  --bs-secondary-rgb: 108, 117, 125;
-  --bs-success: #198754;
-  --bs-success-rgb: 25, 135, 84;
-  --bs-info: #0dcaf0;
-  --bs-info-rgb: 13, 202, 240;
-  --bs-warning: #ffc107;
-  --bs-warning-rgb: 255, 193, 7;
-  --bs-danger: #dc3545;
-  --bs-danger-rgb: 220, 53, 69;
-  --bs-light: #f8f9fa;
-  --bs-light-rgb: 248, 249, 250;
-  --bs-dark: #212529;
-  --bs-dark-rgb: 33, 37, 41;
+  /* Brand colours */
+  --bg: #F5F1EE;
+  --surface: #FFFFFF;
+  --surface-sunken: #FBF8F6;
+  --chip: #F5F1EE;
+  --border-brand: #E6DED8;
+  --border-strong: #DCD2CB;
+  --divider: #F0E9E4;
+  --ink: #241C1A;
+  --ink-2: #4A3F3A;
+  --muted-brand: #6B605A;
+  --on-ink: #FFF8F2;
+  --on-ink-muted: #CDBFB7;
+  --accent-brand: #C2471F;
+  --accent-link: #A63F1C;
+  --accent-soft: #FCE3D6;
+  --accent-tint: #FFF4EE;
+  --accent-light: #F2A27E;
+  --teal: #2B7F86;
+  --teal-soft: #DDEFEC;
+  --teal-text: #1C5A5F;
+  --neutral-soft: #ECE6E1;
+  --neutral-text: #5E534D;
+  --danger-brand: #B42335;
+  --danger-soft: #FADDE2;
+  --warn-soft: #FBEFC4;
+  --warn-ink: #6B4E00;
 
-  /* Extended Color Palette */
-  --primary: #0052cc;
-  --primary-hover: #0065ff;
-  --primary-foreground: #ffffff;
+  /* Bootstrap-compatible names, mapped to the brand */
+  --bs-primary: #C2471F;
+  --bs-primary-rgb: 194, 71, 31;
+  --bs-secondary: #6B605A;
+  --bs-secondary-rgb: 107, 96, 90;
+  --bs-success: #2B7F86;
+  --bs-success-rgb: 43, 127, 134;
+  --bs-info: #2B7F86;
+  --bs-info-rgb: 43, 127, 134;
+  --bs-warning: #E4B85C;
+  --bs-warning-rgb: 228, 184, 92;
+  --bs-danger: #B42335;
+  --bs-danger-rgb: 180, 35, 53;
+  --bs-light: #F5F1EE;
+  --bs-light-rgb: 245, 241, 238;
+  --bs-dark: #241C1A;
+  --bs-dark-rgb: 36, 28, 26;
 
-  --secondary: #f1f2f4;
-  --secondary-hover: #e1e4e9;
-  --secondary-foreground: #172b4d;
+  /* Semantic palette used by the screens */
+  --primary: #C2471F;
+  --primary-hover: #A63F1C;
+  --primary-foreground: #FFFFFF;
 
-  --accent: #0078d4;
-  --accent-hover: #106ebe;
-  --accent-foreground: #ffffff;
+  --secondary: #F5F1EE;
+  --secondary-hover: #ECE6E1;
+  --secondary-foreground: #4A3F3A;
 
-  /* Background Colors */
-  --background: #ffffff;
-  --foreground: #172b4d;
+  --accent: #2B7F86;
+  --accent-hover: #1C5A5F;
+  --accent-foreground: #FFFFFF;
 
-  --card: #ffffff;
-  --card-foreground: #172b4d;
+  --background: #F5F1EE;
+  --foreground: #241C1A;
 
-  --muted: #f1f2f4;
-  --muted-foreground: #6b778c;
+  --card: #FFFFFF;
+  --card-foreground: #241C1A;
 
-  --popover: #ffffff;
-  --popover-foreground: #172b4d;
+  --muted: #F5F1EE;
+  --muted-foreground: #6B605A;
 
-  /* Border & Input Colors */
-  --border: #dfe1e6;
-  --input: #dfe1e6;
-  --ring: #0052cc;
+  --popover: #FFFFFF;
+  --popover-foreground: #241C1A;
 
-  /* Typography */
-  --text-primary: #172b4d;
-  --text-secondary: #6b778c;
-  --text-tertiary: #97a0af;
-  --text-inverse: #ffffff;
+  --border: #E6DED8;
+  --input: #DCD2CB;
+  --ring: #C2471F;
 
-  /* Spacing Scale - Bootstrap 5 Compatible */
+  --text-primary: #241C1A;
+  --text-secondary: #6B605A;
+  --text-tertiary: #7D716A;
+  --text-inverse: #FFF8F2;
+
+  /* Spacing Scale */
   --bs-gutter-x: 1.5rem;
   --bs-gutter-y: 0;
   --spacing-xs: 0.25rem;
@@ -77,23 +103,27 @@ Compatible with Bootstrap 5 design system and utilities
   --spacing-2xl: 2rem;
   --spacing-3xl: 3rem;
 
-  /* Border Radius */
-  --bs-border-radius: 0.375rem;
-  --bs-border-radius-sm: 0.25rem;
-  --bs-border-radius-lg: 0.5rem;
-  --bs-border-radius-xl: 1rem;
-  --bs-border-radius-2xl: 2rem;
-  --radius: 6px;
+  /* Typography */
+  --font-display: 'Bricolage Grotesque', system-ui, sans-serif;
+  --font-body: 'Figtree', system-ui, sans-serif;
 
-  /* Shadows - Enhanced */
-  --bs-box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
-  --bs-box-shadow-sm: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
-  --bs-box-shadow-lg: 0 1rem 3rem rgba(0, 0, 0, 0.175);
-  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
-  --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
-  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
-  --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+  /* Shape: cards 18-24px, buttons and inputs 12px, chips 8px, pills 999px */
+  --bs-border-radius: 0.75rem;
+  --bs-border-radius-sm: 0.5rem;
+  --bs-border-radius-lg: 1.125rem;
+  --bs-border-radius-xl: 1.5rem;
+  --bs-border-radius-2xl: 2rem;
+  --radius: 12px;
+
+  /* Warm shadows (the brand hover shadow is 0 10px 24px -14px rgba(60,30,20,.35)) */
+  --bs-box-shadow: 0 1px 2px rgba(60, 30, 20, 0.08);
+  --bs-box-shadow-sm: 0 1px 2px rgba(60, 30, 20, 0.08);
+  --bs-box-shadow-lg: 0 10px 24px -14px rgba(60, 30, 20, 0.35);
+  --shadow-sm: 0 1px 2px 0 rgba(60, 30, 20, 0.08);
+  --shadow: 0 1px 3px 0 rgba(60, 30, 20, 0.1), 0 1px 2px -1px rgba(60, 30, 20, 0.1);
+  --shadow-md: 0 4px 10px -6px rgba(60, 30, 20, 0.25);
+  --shadow-lg: 0 10px 24px -14px rgba(60, 30, 20, 0.35);
+  --shadow-xl: 0 16px 32px -16px rgba(60, 30, 20, 0.4);
 
   /* Transitions */
   --transition: all 0.2s ease-in-out;
@@ -101,27 +131,27 @@ Compatible with Bootstrap 5 design system and utilities
   --transition-slow: all 0.3s ease-in-out;
 }
 
-/* Dark Mode Support */
+/* Dark mode: warm dark surfaces, light text */
 [data-bs-theme="dark"] {
-  --background: #222222;
-  --foreground: #ffffff;
-  --card: #2a2a2a;
-  --card-foreground: #ffffff;
-  --popover: #2a2a2a;
-  --popover-foreground: #ffffff;
-  --primary: #5b9bd5;
-  --primary-foreground: #000000;
-  --secondary: #3a3a3a;
-  --secondary-foreground: #ffffff;
-  --muted: #3a3a3a;
-  --muted-foreground: #a0a0a0;
-  --accent: #5b9bd5;
-  --accent-foreground: #000000;
-  --border: #4a4a4a;
-  --input: #4a4a4a;
-  --text-primary: #ffffff;
-  --text-secondary: #a0a0a0;
-  --text-tertiary: #808080;
+  --background: #1B1513;
+  --foreground: #FFF8F2;
+  --card: #241C1A;
+  --card-foreground: #FFF8F2;
+  --popover: #241C1A;
+  --popover-foreground: #FFF8F2;
+  --primary: #F2A27E;
+  --primary-foreground: #241C1A;
+  --secondary: #322824;
+  --secondary-foreground: #FFF8F2;
+  --muted: #322824;
+  --muted-foreground: #CDBFB7;
+  --accent: #F2A27E;
+  --accent-foreground: #241C1A;
+  --border: #4A3F3A;
+  --input: #4A3F3A;
+  --text-primary: #FFF8F2;
+  --text-secondary: #CDBFB7;
+  --text-tertiary: #A89B93;
 }
 
 /* ===== BASE STYLES ===== */
@@ -138,7 +168,7 @@ html {
 }
 
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  font-family: var(--font-body);
   background-color: var(--background);
   color: var(--foreground);
   line-height: 1.6;
@@ -1171,7 +1201,7 @@ select:focus-visible {
 /* Hero Section */
 .hero {
   padding: 6rem 0;
-  background: linear-gradient(135deg, var(--background) 0%, rgba(var(--bs-primary-rgb), 0.1) 100%);
+  background: var(--accent-tint);
   text-align: center;
 }
 
@@ -1179,10 +1209,7 @@ select:focus-visible {
   font-size: 3.5rem;
   font-weight: 700;
   margin-bottom: var(--spacing-lg);
-  background: linear-gradient(135deg, var(--foreground), var(--muted-foreground));
-  background-clip: text;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: var(--ink);
 }
 
 .hero .lead {
@@ -1960,7 +1987,7 @@ select:focus-visible {
 body {
   margin: 0;
   padding: 0;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: var(--font-body);
   background-color: var(--background);
   overflow-x: hidden;
 }
@@ -1993,9 +2020,11 @@ body {
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
+  font-family: var(--font-display);
   font-size: 1.25rem;
-  font-weight: 700;
-  color: var(--bs-primary);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--ink);
 }
 
 .logo i {
@@ -2809,7 +2838,7 @@ body {
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  background: linear-gradient(135deg, var(--bs-primary) 0%, rgba(var(--bs-primary-rgb), 0.8) 100%);
+  background: var(--bs-primary);
   padding: var(--spacing-lg);
 }
 
@@ -2876,3 +2905,18 @@ body {
 }
 
 /* ===== END OF STYLESHEET ===== */
+/* ===== BRAND ===== */
+h1, h2, h3, h4, h5, h6, .logo {
+  font-family: var(--font-display);
+}
+
+.brand-mark {
+  width: 1.75em;
+  height: 1.75em;
+  flex: 0 0 auto;
+}
+
+.logo .brand-mark {
+  width: 1.6rem;
+  height: 1.6rem;
+}

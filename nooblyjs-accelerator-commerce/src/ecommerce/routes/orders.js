@@ -14,7 +14,7 @@ module.exports = (ctx) => {
   // ===== ORDERS API =====
 
   // Create new order
-  app.post(`/applications/${app_path}/api/orders`, requireAuth, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/orders`, requireAuth, async (req, res) => {
     try {
       const { items, shippingAddress, billingAddress, paymentMethod } = req.body;
 
@@ -85,7 +85,7 @@ module.exports = (ctx) => {
   });
 
   // Get order details
-  app.get(`/applications/${app_path}/api/orders/:id`, requireAuth, async (req, res) => {
+  app.get(`/applications/commerce/${app_path}/api/orders/:id`, requireAuth, async (req, res) => {
     try {
       const order = await dataServe.getByUuid('orders', req.params.id);
 
@@ -111,7 +111,7 @@ module.exports = (ctx) => {
   });
 
   // Track order status (public endpoint)
-  app.get(`/applications/${app_path}/api/orders/track/:orderNumber`, async (req, res) => {
+  app.get(`/applications/commerce/${app_path}/api/orders/track/:orderNumber`, async (req, res) => {
     try {
       const orders = await dataServe.jsonFindByPath('orders', 'orderNumber', req.params.orderNumber);
 

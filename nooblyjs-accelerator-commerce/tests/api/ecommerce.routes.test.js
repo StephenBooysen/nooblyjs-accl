@@ -34,40 +34,40 @@ describe('eCommerce API routes', () => {
   });
 
   test('public status endpoint returns 200 and reports running', async () => {
-    const res = await request(app).get('/applications/ecommerce/api/status');
+    const res = await request(app).get('/applications/commerce/ecommerce/api/status');
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('running');
   });
 
   test('public products endpoint returns 200 with a products array', async () => {
-    const res = await request(app).get('/applications/ecommerce/api/products');
+    const res = await request(app).get('/applications/commerce/ecommerce/api/products');
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body.products)).toBe(true);
   });
 
   test('admin route without a bearer token returns 401', async () => {
-    const res = await request(app).get('/applications/ecommerce/api/admin/orders');
+    const res = await request(app).get('/applications/commerce/ecommerce/api/admin/orders');
     expect(res.status).toBe(401);
     expect(res.body.error).toBe('No token provided');
   });
 
   test('admin route with a malformed token returns 401', async () => {
     const res = await request(app)
-      .get('/applications/ecommerce/api/admin/orders')
+      .get('/applications/commerce/ecommerce/api/admin/orders')
       .set('Authorization', 'Bearer not-a-real-token');
     expect(res.status).toBe(401);
   });
 
   test('payment intent without Stripe configured returns 503', async () => {
     const res = await request(app)
-      .post('/applications/ecommerce/api/payments/create-intent')
+      .post('/applications/commerce/ecommerce/api/payments/create-intent')
       .send({ amount: 10 });
     expect(res.status).toBe(503);
     expect(res.body).toEqual({ error: 'payments not configured' });
   });
 
   test('payment config without Stripe configured returns 503', async () => {
-    const res = await request(app).get('/applications/ecommerce/api/payments/config');
+    const res = await request(app).get('/applications/commerce/ecommerce/api/payments/config');
     expect(res.status).toBe(503);
     expect(res.body).toEqual({ error: 'payments not configured' });
   });

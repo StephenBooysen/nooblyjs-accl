@@ -5,7 +5,7 @@
 
 class NooblyStore {
   constructor() {
-    this.apiBase = '/applications/ecommerce/api';
+    this.apiBase = '/applications/commerce/ecommerce/api';
     this.currentPage = 'home';
     this.cart = { items: [], sessionId: this.generateSessionId() };
     this.products = [];
@@ -43,7 +43,7 @@ class NooblyStore {
   // Get placeholder image with fallback
   getPlaceholderImage() {
     // Try the SVG file first, fallback to data URI
-    return '/applications/ecommerce/images/placeholder.svg';
+    return '/applications/commerce/ecommerce/images/placeholder.svg';
   }
 
   // Handle image loading errors

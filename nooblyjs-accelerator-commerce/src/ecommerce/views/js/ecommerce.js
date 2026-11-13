@@ -5,7 +5,7 @@
 
 class NooblyStore {
   constructor() {
-    this.apiBase = '/applications/ecommerce/api';
+    this.apiBase = '/applications/commerce/ecommerce/api';
     this.currentUser = null;
     this.currentPage = 'home';
     this.cart = { items: [], sessionId: this.generateSessionId() };
@@ -809,10 +809,10 @@ class NooblyStore {
       const appearance = {
         theme: 'stripe',
         variables: {
-          colorPrimary: '#0070f3',
-          colorBackground: '#ffffff',
-          colorText: '#1a1a1a',
-          colorDanger: '#df1b41',
+          colorPrimary: '#C2471F',
+          colorBackground: '#FFFFFF',
+          colorText: '#241C1A',
+          colorDanger: '#B42335',
           fontFamily: 'Inter, system-ui, sans-serif',
           spacingUnit: '4px',
           borderRadius: '8px'

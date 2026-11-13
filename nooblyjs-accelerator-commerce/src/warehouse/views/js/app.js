@@ -7,7 +7,7 @@
 
 class WarehouseDashboard {
     constructor() {
-        this.baseUrl = '/applications/warehouse/api';
+        this.baseUrl = '/applications/commerce/warehouse/api';
         this.currentSection = 'dashboard';
         this.loadingModal = null;
 

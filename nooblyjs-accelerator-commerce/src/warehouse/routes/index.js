@@ -35,7 +35,7 @@ module.exports = (options, eventEmitter, services, modules) => {
 
   // =================== SYSTEM ROUTES ===================
 
-  app.get(`/applications/${app_path}/api/status`, (req, res) => {
+  app.get(`/applications/commerce/${app_path}/api/status`, (req, res) => {
     res.json({
       status: 'running',
       application: 'Warehouse Management System',
@@ -45,7 +45,7 @@ module.exports = (options, eventEmitter, services, modules) => {
     });
   });
 
-  app.get(`/applications/${app_path}/api/health`, async (req, res) => {
+  app.get(`/applications/commerce/${app_path}/api/health`, async (req, res) => {
     try {
       const health = {
         status: 'healthy',
@@ -78,7 +78,7 @@ module.exports = (options, eventEmitter, services, modules) => {
   // =================== INVENTORY MANAGEMENT ROUTES ===================
 
   // Products
-  app.post(`/applications/${app_path}/api/products`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/products`, async (req, res) => {
     try {
       const productId = await modules.inventory.createProduct(req.body);
       res.status(201).json({ success: true, productId });
@@ -88,7 +88,7 @@ module.exports = (options, eventEmitter, services, modules) => {
     }
   });
 
-  app.get(`/applications/${app_path}/api/products/:identifier`, async (req, res) => {
+  app.get(`/applications/commerce/${app_path}/api/products/:identifier`, async (req, res) => {
     try {
       const product = await modules.inventory.getProduct(req.params.identifier);
       res.json({ success: true, data: product });
@@ -98,7 +98,7 @@ module.exports = (options, eventEmitter, services, modules) => {
     }
   });
 
-  app.put(`/applications/${app_path}/api/products/:identifier`, async (req, res) => {
+  app.put(`/applications/commerce/${app_path}/api/products/:identifier`, async (req, res) => {
     try {
       const product = await modules.inventory.updateProduct(req.params.identifier, req.body);
       res.json({ success: true, data: product });
@@ -109,7 +109,7 @@ module.exports = (options, eventEmitter, services, modules) => {
   });
 
   // Locations
-  app.post(`/applications/${app_path}/api/locations`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/locations`, async (req, res) => {
     try {
       const locationId = await modules.inventory.createLocation(req.body);
       res.status(201).json({ success: true, locationId });
@@ -119,7 +119,7 @@ module.exports = (options, eventEmitter, services, modules) => {
     }
   });
 
-  app.get(`/applications/${app_path}/api/locations/available/:productSku`, async (req, res) => {
+  app.get(`/applications/commerce/${app_path}/api/locations/available/:productSku`, async (req, res) => {
     try {
       const locations = await modules.inventory.getAvailableLocations(
         req.params.productSku,
@@ -133,7 +133,7 @@ module.exports = (options, eventEmitter, services, modules) => {
   });
 
   // Inventory
-  app.get(`/applications/${app_path}/api/inventory/:productSku`, async (req, res) => {
+  app.get(`/applications/commerce/${app_path}/api/inventory/:productSku`, async (req, res) => {
     try {
       const inventory = await modules.inventory.getInventory(
         req.params.productSku,
@@ -146,7 +146,7 @@ module.exports = (options, eventEmitter, services, modules) => {
     }
   });
 
-  app.post(`/applications/${app_path}/api/inventory/adjust`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/inventory/adjust`, async (req, res) => {
     try {
       const { productSku, locationCode, quantity, reason } = req.body;
       const result = await modules.inventory.adjustInventory(productSku, locationCode, quantity, reason);
@@ -157,7 +157,7 @@ module.exports = (options, eventEmitter, services, modules) => {
     }
   });
 
-  app.post(`/applications/${app_path}/api/inventory/allocate`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/inventory/allocate`, async (req, res) => {
     try {
       const { productSku, quantity, orderId } = req.body;
       const allocations = await modules.inventory.allocateInventory(productSku, quantity, orderId);
@@ -169,7 +169,7 @@ module.exports = (options, eventEmitter, services, modules) => {
   });
 
   // Lots and Batches
-  app.post(`/applications/${app_path}/api/lots`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/lots`, async (req, res) => {
     try {
       const lotId = await modules.inventory.createLot(req.body);
       res.status(201).json({ success: true, lotId });
@@ -179,7 +179,7 @@ module.exports = (options, eventEmitter, services, modules) => {
     }
   });
 
-  app.get(`/applications/${app_path}/api/lots/product/:productSku`, async (req, res) => {
+  app.get(`/applications/commerce/${app_path}/api/lots/product/:productSku`, async (req, res) => {
     try {
       const lots = await modules.inventory.getLotsByProduct(req.params.productSku, req.query.status);
       res.json({ success: true, data: lots });
@@ -189,7 +189,7 @@ module.exports = (options, eventEmitter, services, modules) => {
     }
   });
 
-  app.get(`/applications/${app_path}/api/lots/expiring`, async (req, res) => {
+  app.get(`/applications/commerce/${app_path}/api/lots/expiring`, async (req, res) => {
     try {
       const days = parseInt(req.query.days) || 30;
       const lots = await modules.inventory.getExpiringLots(days);
@@ -203,7 +203,7 @@ module.exports = (options, eventEmitter, services, modules) => {
   // =================== INBOUND OPERATIONS ROUTES ===================
 
   // Purchase Orders
-  app.post(`/applications/${app_path}/api/purchase-orders`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/purchase-orders`, async (req, res) => {
     try {
       const poId = await modules.inbound.createPurchaseOrder(req.body);
       res.status(201).json({ success: true, poId });
@@ -214,7 +214,7 @@ module.exports = (options, eventEmitter, services, modules) => {
   });
 
   // ASN Processing
-  app.post(`/applications/${app_path}/api/asn`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/asn`, async (req, res) => {
     try {
       const asnId = await modules.inbound.processASN(req.body);
       res.status(201).json({ success: true, asnId });
@@ -225,7 +225,7 @@ module.exports = (options, eventEmitter, services, modules) => {
   });
 
   // Receiving
-  app.post(`/applications/${app_path}/api/receiving/start`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/receiving/start`, async (req, res) => {
     try {
       const receiptId = await modules.inbound.startReceiving(req.body);
       res.status(201).json({ success: true, receiptId });
@@ -235,7 +235,7 @@ module.exports = (options, eventEmitter, services, modules) => {
     }
   });
 
-  app.post(`/applications/${app_path}/api/receiving/item`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/receiving/item`, async (req, res) => {
     try {
       const result = await modules.inbound.processReceivedItem(req.body);
       res.json({ success: true, data: result });
@@ -246,7 +246,7 @@ module.exports = (options, eventEmitter, services, modules) => {
   });
 
   // Put-away
-  app.post(`/applications/${app_path}/api/putaway/complete/:taskId`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/putaway/complete/:taskId`, async (req, res) => {
     try {
       const result = await modules.inbound.completePutAwayTask(req.params.taskId, req.body);
       res.json({ success: true, data: result });
@@ -259,7 +259,7 @@ module.exports = (options, eventEmitter, services, modules) => {
   // =================== OUTBOUND OPERATIONS ROUTES ===================
 
   // Orders
-  app.post(`/applications/${app_path}/api/orders`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/orders`, async (req, res) => {
     try {
       const orderId = await modules.outbound.createOrder(req.body);
       res.status(201).json({ success: true, orderId });
@@ -269,7 +269,7 @@ module.exports = (options, eventEmitter, services, modules) => {
     }
   });
 
-  app.post(`/applications/${app_path}/api/orders/:orderId/validate`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/orders/:orderId/validate`, async (req, res) => {
     try {
       const result = await modules.outbound.validateOrder(req.params.orderId);
       res.json({ success: true, data: result });
@@ -279,7 +279,7 @@ module.exports = (options, eventEmitter, services, modules) => {
     }
   });
 
-  app.post(`/applications/${app_path}/api/orders/:orderId/allocate`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/orders/:orderId/allocate`, async (req, res) => {
     try {
       const result = await modules.outbound.allocateOrder(req.params.orderId);
       res.json({ success: true, data: result });
@@ -290,7 +290,7 @@ module.exports = (options, eventEmitter, services, modules) => {
   });
 
   // Waves
-  app.post(`/applications/${app_path}/api/waves`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/waves`, async (req, res) => {
     try {
       const waveId = await modules.outbound.createWave(req.body);
       res.status(201).json({ success: true, waveId });
@@ -300,7 +300,7 @@ module.exports = (options, eventEmitter, services, modules) => {
     }
   });
 
-  app.post(`/applications/${app_path}/api/waves/:waveId/plan`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/waves/:waveId/plan`, async (req, res) => {
     try {
       const result = await modules.outbound.planWave(req.params.waveId, req.body);
       res.json({ success: true, data: result });
@@ -310,7 +310,7 @@ module.exports = (options, eventEmitter, services, modules) => {
     }
   });
 
-  app.post(`/applications/${app_path}/api/waves/:waveId/pick-tasks`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/waves/:waveId/pick-tasks`, async (req, res) => {
     try {
       const taskIds = await modules.outbound.generatePickTasks(req.params.waveId);
       res.json({ success: true, data: { taskIds, count: taskIds.length } });
@@ -321,7 +321,7 @@ module.exports = (options, eventEmitter, services, modules) => {
   });
 
   // Picking
-  app.post(`/applications/${app_path}/api/picking/complete/:taskId`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/picking/complete/:taskId`, async (req, res) => {
     try {
       const result = await modules.outbound.completePickTask(req.params.taskId, req.body);
       res.json({ success: true, data: result });
@@ -332,7 +332,7 @@ module.exports = (options, eventEmitter, services, modules) => {
   });
 
   // Packing
-  app.get(`/applications/${app_path}/api/packing/slip/:orderId`, async (req, res) => {
+  app.get(`/applications/commerce/${app_path}/api/packing/slip/:orderId`, async (req, res) => {
     try {
       const packingSlip = await modules.outbound.createPackingSlip(req.params.orderId);
       res.json({ success: true, data: packingSlip });
@@ -342,7 +342,7 @@ module.exports = (options, eventEmitter, services, modules) => {
     }
   });
 
-  app.post(`/applications/${app_path}/api/packing/complete/:orderId`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/packing/complete/:orderId`, async (req, res) => {
     try {
       const result = await modules.outbound.completePackingOrder(req.params.orderId, req.body);
       res.json({ success: true, data: result });
@@ -355,7 +355,7 @@ module.exports = (options, eventEmitter, services, modules) => {
   // =================== RESOURCE MANAGEMENT ROUTES ===================
 
   // Staff
-  app.post(`/applications/${app_path}/api/staff`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/staff`, async (req, res) => {
     try {
       const staffId = await modules.resource.createStaffMember(req.body);
       res.status(201).json({ success: true, staffId });
@@ -365,7 +365,7 @@ module.exports = (options, eventEmitter, services, modules) => {
     }
   });
 
-  app.post(`/applications/${app_path}/api/staff/:employeeId/assign`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/staff/:employeeId/assign`, async (req, res) => {
     try {
       const assignment = await modules.resource.assignTaskToStaff(req.params.employeeId, req.body);
       res.json({ success: true, data: assignment });
@@ -375,7 +375,7 @@ module.exports = (options, eventEmitter, services, modules) => {
     }
   });
 
-  app.post(`/applications/${app_path}/api/staff/assignments/:assignmentId/complete`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/staff/assignments/:assignmentId/complete`, async (req, res) => {
     try {
       const result = await modules.resource.completeTaskAssignment(req.params.assignmentId, req.body);
       res.json({ success: true, data: result });
@@ -385,7 +385,7 @@ module.exports = (options, eventEmitter, services, modules) => {
     }
   });
 
-  app.get(`/applications/${app_path}/api/staff/available`, async (req, res) => {
+  app.get(`/applications/commerce/${app_path}/api/staff/available`, async (req, res) => {
     try {
       const staff = await modules.resource.getAvailableStaff(
         req.query.taskType,
@@ -399,7 +399,7 @@ module.exports = (options, eventEmitter, services, modules) => {
   });
 
   // Equipment
-  app.post(`/applications/${app_path}/api/equipment`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/equipment`, async (req, res) => {
     try {
       const equipmentId = await modules.resource.createEquipment(req.body);
       res.status(201).json({ success: true, equipmentId });
@@ -409,7 +409,7 @@ module.exports = (options, eventEmitter, services, modules) => {
     }
   });
 
-  app.post(`/applications/${app_path}/api/equipment/:assetId/assign/:employeeId`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/equipment/:assetId/assign/:employeeId`, async (req, res) => {
     try {
       const assignment = await modules.resource.assignEquipment(
         req.params.assetId,
@@ -423,7 +423,7 @@ module.exports = (options, eventEmitter, services, modules) => {
     }
   });
 
-  app.post(`/applications/${app_path}/api/equipment/assignments/:assignmentId/return`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/equipment/assignments/:assignmentId/return`, async (req, res) => {
     try {
       const result = await modules.resource.returnEquipment(req.params.assignmentId, req.body);
       res.json({ success: true, data: result });
@@ -434,7 +434,7 @@ module.exports = (options, eventEmitter, services, modules) => {
   });
 
   // Performance Reports
-  app.get(`/applications/${app_path}/api/reports/staff-performance`, async (req, res) => {
+  app.get(`/applications/commerce/${app_path}/api/reports/staff-performance`, async (req, res) => {
     try {
       const report = await modules.resource.generateStaffPerformanceReport(req.query);
       res.json({ success: true, data: report });
@@ -444,7 +444,7 @@ module.exports = (options, eventEmitter, services, modules) => {
     }
   });
 
-  app.get(`/applications/${app_path}/api/reports/equipment-utilization`, async (req, res) => {
+  app.get(`/applications/commerce/${app_path}/api/reports/equipment-utilization`, async (req, res) => {
     try {
       const report = await modules.resource.generateEquipmentUtilizationReport(req.query);
       res.json({ success: true, data: report });
@@ -457,7 +457,7 @@ module.exports = (options, eventEmitter, services, modules) => {
   // =================== DELIVERY AND FULFILLMENT ROUTES ===================
 
   // Carriers
-  app.post(`/applications/${app_path}/api/carriers`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/carriers`, async (req, res) => {
     try {
       const carrierId = await modules.delivery.createCarrier(req.body);
       res.status(201).json({ success: true, carrierId });
@@ -467,7 +467,7 @@ module.exports = (options, eventEmitter, services, modules) => {
     }
   });
 
-  app.post(`/applications/${app_path}/api/carriers/select`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/carriers/select`, async (req, res) => {
     try {
       const selection = await modules.delivery.selectOptimalCarrier(req.body);
       res.json({ success: true, data: selection });
@@ -478,7 +478,7 @@ module.exports = (options, eventEmitter, services, modules) => {
   });
 
   // Shipments
-  app.post(`/applications/${app_path}/api/shipments`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/shipments`, async (req, res) => {
     try {
       const shipmentId = await modules.delivery.createShipment(req.body);
       res.status(201).json({ success: true, shipmentId });
@@ -488,7 +488,7 @@ module.exports = (options, eventEmitter, services, modules) => {
     }
   });
 
-  app.post(`/applications/${app_path}/api/shipments/:shipmentId/labels`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/shipments/:shipmentId/labels`, async (req, res) => {
     try {
       const result = await modules.delivery.generateShippingLabels(req.params.shipmentId);
       res.json({ success: true, data: result });
@@ -498,7 +498,7 @@ module.exports = (options, eventEmitter, services, modules) => {
     }
   });
 
-  app.post(`/applications/${app_path}/api/shipments/:shipmentId/tracking`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/shipments/:shipmentId/tracking`, async (req, res) => {
     try {
       const tracking = await modules.delivery.updateShipmentTracking(req.params.shipmentId, req.body);
       res.json({ success: true, data: tracking });
@@ -509,7 +509,7 @@ module.exports = (options, eventEmitter, services, modules) => {
   });
 
   // Returns
-  app.post(`/applications/${app_path}/api/returns`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/returns`, async (req, res) => {
     try {
       const rmaId = await modules.delivery.createReturnAuthorization(req.body);
       res.status(201).json({ success: true, rmaId });
@@ -519,7 +519,7 @@ module.exports = (options, eventEmitter, services, modules) => {
     }
   });
 
-  app.post(`/applications/${app_path}/api/returns/:rmaId/process`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/returns/:rmaId/process`, async (req, res) => {
     try {
       const result = await modules.delivery.processReceivedReturn(req.params.rmaId, req.body);
       res.json({ success: true, data: result });
@@ -530,7 +530,7 @@ module.exports = (options, eventEmitter, services, modules) => {
   });
 
   // Delivery Reports
-  app.get(`/applications/${app_path}/api/reports/delivery-performance`, async (req, res) => {
+  app.get(`/applications/commerce/${app_path}/api/reports/delivery-performance`, async (req, res) => {
     try {
       const report = await modules.delivery.generateDeliveryPerformanceReport(req.query);
       res.json({ success: true, data: report });

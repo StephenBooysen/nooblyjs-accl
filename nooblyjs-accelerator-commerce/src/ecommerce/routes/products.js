@@ -14,7 +14,7 @@ module.exports = (ctx) => {
   // ===== PRODUCTS API =====
 
   // Get all products with filtering and pagination
-  app.get(`/applications/${app_path}/api/products`, async (req, res) => {
+  app.get(`/applications/commerce/${app_path}/api/products`, async (req, res) => {
     try {
       const { category, minPrice, maxPrice, search: searchTerm, page = 1, limit = 20 } = req.query;
 
@@ -63,7 +63,7 @@ module.exports = (ctx) => {
   });
 
   // Get product by ID
-  app.get(`/applications/${app_path}/api/products/:id`, async (req, res) => {
+  app.get(`/applications/commerce/${app_path}/api/products/:id`, async (req, res) => {
     try {
       logger.info(`Fetching product with ID: ${req.params.id}`);
 
@@ -116,7 +116,7 @@ module.exports = (ctx) => {
   });
 
   // Get categories
-  app.get(`/applications/${app_path}/api/categories`, async (req, res) => {
+  app.get(`/applications/commerce/${app_path}/api/categories`, async (req, res) => {
     try {
       const categories = await dataServe.jsonFindByCriteria('categories', { status: 'active' });
       res.json({ categories });
@@ -127,7 +127,7 @@ module.exports = (ctx) => {
   });
 
   // Debug route to check products in database
-  app.get(`/applications/${app_path}/api/debug/products`, async (req, res) => {
+  app.get(`/applications/commerce/${app_path}/api/debug/products`, async (req, res) => {
     try {
       const allProducts = await dataServe.jsonFind('products', () => true);
       const activeProducts = await dataServe.jsonFindByCriteria('products', { status: 'active' });
@@ -145,7 +145,7 @@ module.exports = (ctx) => {
   });
 
   // Trigger manual seeding (for debugging)
-  app.post(`/applications/${app_path}/api/debug/seed`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/debug/seed`, async (req, res) => {
     try {
       const SeedService = require('../services/seedService');
       const seedService = new SeedService(services);
@@ -161,7 +161,7 @@ module.exports = (ctx) => {
   });
 
   // Search products
-  app.get(`/applications/${app_path}/api/search`, async (req, res) => {
+  app.get(`/applications/commerce/${app_path}/api/search`, async (req, res) => {
     try {
       const { q: query, category, limit = 20 } = req.query;
 

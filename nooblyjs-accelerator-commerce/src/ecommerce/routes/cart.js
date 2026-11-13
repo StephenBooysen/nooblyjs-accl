@@ -14,7 +14,7 @@ module.exports = (ctx) => {
   // ===== CART API =====
 
   // Add item to cart
-  app.post(`/applications/${app_path}/api/cart/add`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/cart/add`, async (req, res) => {
     try {
       const { sessionId, productId, variantId, quantity = 1 } = req.body;
 
@@ -65,7 +65,7 @@ module.exports = (ctx) => {
   });
 
   // Get cart
-  app.get(`/applications/${app_path}/api/cart/:sessionId`, async (req, res) => {
+  app.get(`/applications/commerce/${app_path}/api/cart/:sessionId`, async (req, res) => {
     try {
       const cart = await cache.get(`cart:${req.params.sessionId}`);
 
@@ -81,7 +81,7 @@ module.exports = (ctx) => {
   });
 
   // Update cart item quantity
-  app.put(`/applications/${app_path}/api/cart/update`, async (req, res) => {
+  app.put(`/applications/commerce/${app_path}/api/cart/update`, async (req, res) => {
     try {
       const { sessionId, productId, variantId, quantity } = req.body;
 
@@ -115,7 +115,7 @@ module.exports = (ctx) => {
   });
 
   // Remove item from cart
-  app.delete(`/applications/${app_path}/api/cart/remove`, async (req, res) => {
+  app.delete(`/applications/commerce/${app_path}/api/cart/remove`, async (req, res) => {
     try {
       const { sessionId, productId, variantId } = req.body;
 

@@ -26,7 +26,7 @@ module.exports = (options, eventEmitter, services) => {
   const { logger } = services;
   
   // Serve static files for the wiki application
-  app.use(`/applications/${app_path}`, express.static(path.join(__dirname)));
+  app.use(`/applications/commerce/${app_path}`, express.static(path.join(__dirname)));
   
   // Log that wiki views are registered
   logger.info(`${app_path} application views registered successfully`);

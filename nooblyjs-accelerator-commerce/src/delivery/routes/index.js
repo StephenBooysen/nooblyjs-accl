@@ -46,7 +46,7 @@ module.exports = (options, eventEmitter, services) => {
   } = services;
 
   // Base path for all delivery API routes
-  const basePath = `/applications/${app_path}/api`;
+  const basePath = `/applications/commerce/${app_path}/api`;
 
   // ================================
   // SYSTEM STATUS & HEALTH

@@ -12,7 +12,7 @@ module.exports = (ctx) => {
 } = ctx;
 
   // Admin Analytics API
-  app.get(`/applications/${app_path}/api/admin/analytics/sales`, requireAuth, requireAdmin, async (req, res) => {
+  app.get(`/applications/commerce/${app_path}/api/admin/analytics/sales`, requireAuth, requireAdmin, async (req, res) => {
     try {
       const { startDate, endDate } = req.query;
 
@@ -61,7 +61,7 @@ module.exports = (ctx) => {
     }
   });
 
-  app.get(`/applications/${app_path}/api/admin/analytics/products`, requireAuth, requireAdmin, async (req, res) => {
+  app.get(`/applications/commerce/${app_path}/api/admin/analytics/products`, requireAuth, requireAdmin, async (req, res) => {
     try {
       // Get all order items to analyze product performance
       const orderItems = await dataServe.jsonFind('order_items', () => true);
@@ -114,7 +114,7 @@ module.exports = (ctx) => {
     }
   });
 
-  app.get(`/applications/${app_path}/api/admin/analytics/customers`, requireAuth, requireAdmin, async (req, res) => {
+  app.get(`/applications/commerce/${app_path}/api/admin/analytics/customers`, requireAuth, requireAdmin, async (req, res) => {
     try {
       const users = await dataServe.jsonFindByCriteria('users', { status: 'active' });
       const orders = await dataServe.jsonFind('orders', () => true);

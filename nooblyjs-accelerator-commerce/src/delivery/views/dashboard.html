@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Delivery Management System - Admin Dashboard</title>
-    <link rel="stylesheet" href="/styles.css">
+    <link rel="stylesheet" href="/applications/commerce/styles.css">
 </head>
 <body>
     <div class="header">
@@ -40,7 +40,7 @@
                 <div class="actions-grid">
                     <a href="#" class="action-btn" onclick="createOrder()">Create New Order</a>
                     <a href="#" class="action-btn" onclick="manageDrivers()">Manage Drivers</a>
-                    <a href="/applications/delivery/analytics" class="action-btn">View Analytics</a>
+                    <a href="/applications/commerce/delivery/analytics" class="action-btn">View Analytics</a>
                     <a href="#" class="action-btn" onclick="viewReports()">Generate Reports</a>
                 </div>
             </div>
@@ -57,12 +57,12 @@
         </div>
     </div>
 
-    <script src="/applications/delivery/js/app.js"></script>
+    <script src="/applications/commerce/delivery/js/app.js"></script>
     <script>
         // Load dashboard data
         async function loadDashboardData() {
             try {
-                const response = await fetch('/applications/delivery/api/analytics/overview');
+                const response = await fetch('/applications/commerce/delivery/api/analytics/overview');
                 const data = await response.json();
 
                 if (data.success) {
@@ -85,7 +85,7 @@
                 contactPhone: '+1234567890'
             };
 
-            fetch('/applications/delivery/api/orders', {
+            fetch('/applications/commerce/delivery/api/orders', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(orderData)
@@ -102,7 +102,7 @@
         }
 
         function manageDrivers() {
-            window.location.href = '/applications/delivery/driver';
+            window.location.href = '/applications/commerce/delivery/driver';
         }
 
         function viewReports() {

@@ -14,7 +14,7 @@ module.exports = (ctx) => {
   // ===== STRIPE PAYMENT API =====
 
   // Create payment intent
-  app.post(`/applications/${app_path}/api/payments/create-intent`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/payments/create-intent`, async (req, res) => {
     if (!stripe) return paymentsUnavailable(res);
     try {
       const { amount, currency = 'usd', metadata = {} } = req.body;
@@ -47,7 +47,7 @@ module.exports = (ctx) => {
   });
 
   // Confirm payment and create order
-  app.post(`/applications/${app_path}/api/payments/confirm`, requireAuth, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/payments/confirm`, requireAuth, async (req, res) => {
     if (!stripe) return paymentsUnavailable(res);
     try {
       const {
@@ -159,7 +159,7 @@ module.exports = (ctx) => {
   });
 
   // Handle Stripe webhooks
-  app.post(`/applications/${app_path}/api/payments/webhook`, express.raw({type: 'application/json'}), async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/payments/webhook`, express.raw({type: 'application/json'}), async (req, res) => {
     if (!stripe) return paymentsUnavailable(res);
     const sig = req.headers['stripe-signature'];
     // Without the secret an event cannot be verified, so it is refused rather than accepted unsigned.
@@ -193,7 +193,7 @@ module.exports = (ctx) => {
   });
 
   // Get Stripe publishable key
-  app.get(`/applications/${app_path}/api/payments/config`, (req, res) => {
+  app.get(`/applications/commerce/${app_path}/api/payments/config`, (req, res) => {
     if (!appConfig.stripe.publishableKey) return paymentsUnavailable(res);
     res.json({ publishableKey: appConfig.stripe.publishableKey });
   });

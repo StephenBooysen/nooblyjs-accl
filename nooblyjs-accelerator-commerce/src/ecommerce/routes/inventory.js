@@ -13,7 +13,7 @@ module.exports = (ctx) => {
 
   // ===== INVENTORY MANAGEMENT =====
 
-  app.get(`/applications/${app_path}/api/admin/inventory`, requireAuth, requireAdmin, async (req, res) => {
+  app.get(`/applications/commerce/${app_path}/api/admin/inventory`, requireAuth, requireAdmin, async (req, res) => {
     try {
       const { lowStock = 10 } = req.query;
 
@@ -48,7 +48,7 @@ module.exports = (ctx) => {
     }
   });
 
-  app.put(`/applications/${app_path}/api/admin/inventory/:productId`, requireAuth, requireAdmin, async (req, res) => {
+  app.put(`/applications/commerce/${app_path}/api/admin/inventory/:productId`, requireAuth, requireAdmin, async (req, res) => {
     try {
       const { quantity, reason = 'Admin adjustment' } = req.body;
 

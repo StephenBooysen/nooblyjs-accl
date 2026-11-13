@@ -14,7 +14,7 @@ module.exports = (ctx) => {
   // ===== CONTENT MANAGEMENT API =====
 
   // Get all content items (public)
-  app.get(`/applications/${app_path}/api/content`, async (req, res) => {
+  app.get(`/applications/commerce/${app_path}/api/content`, async (req, res) => {
     try {
       const { type, active } = req.query;
 
@@ -47,7 +47,7 @@ module.exports = (ctx) => {
   });
 
   // Get content item by ID (public)
-  app.get(`/applications/${app_path}/api/content/:id`, async (req, res) => {
+  app.get(`/applications/commerce/${app_path}/api/content/:id`, async (req, res) => {
     try {
       const content = await dataServe.jsonFindById('content', req.params.id);
 
@@ -63,7 +63,7 @@ module.exports = (ctx) => {
   });
 
   // Create content item (admin only)
-  app.post(`/applications/${app_path}/api/content`, requireAuth, requireAdmin, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/content`, requireAuth, requireAdmin, async (req, res) => {
     try {
       const {
         title,
@@ -144,7 +144,7 @@ module.exports = (ctx) => {
   });
 
   // Update content item (admin only)
-  app.put(`/applications/${app_path}/api/content/:id`, requireAuth, requireAdmin, async (req, res) => {
+  app.put(`/applications/commerce/${app_path}/api/content/:id`, requireAuth, requireAdmin, async (req, res) => {
     try {
       const existingContent = await dataServe.jsonFindById('content', req.params.id);
 
@@ -224,7 +224,7 @@ module.exports = (ctx) => {
   });
 
   // Delete content item (admin only)
-  app.delete(`/applications/${app_path}/api/content/:id`, requireAuth, requireAdmin, async (req, res) => {
+  app.delete(`/applications/commerce/${app_path}/api/content/:id`, requireAuth, requireAdmin, async (req, res) => {
     try {
       const content = await dataServe.jsonFindById('content', req.params.id);
 
@@ -244,7 +244,7 @@ module.exports = (ctx) => {
   });
 
   // Increment content views (public)
-  app.post(`/applications/${app_path}/api/content/:id/view`, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/content/:id/view`, async (req, res) => {
     try {
       const content = await dataServe.jsonFindById('content', req.params.id);
 

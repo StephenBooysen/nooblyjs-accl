@@ -64,7 +64,7 @@ function loadConfig(env = process.env) {
     google: {
       clientId: env.GOOGLE_CLIENT_ID || null,
       clientSecret: env.GOOGLE_CLIENT_SECRET || null,
-      callbackUrl: env.GOOGLE_CALLBACK_URL || `http://localhost:${Number(env.PORT) || 3003}/api/auth/google/callback`,
+      callbackUrl: env.GOOGLE_CALLBACK_URL || `http://localhost:${Number(env.PORT) || 3003}/applications/commerce/api/auth/google/callback`,
     },
     adminEmail: env.COMMERCE_ADMIN_EMAIL || null,
     adminPassword: env.COMMERCE_ADMIN_PASSWORD || null,

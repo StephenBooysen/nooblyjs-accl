@@ -14,7 +14,7 @@ module.exports = (ctx) => {
   // ===== ADMIN API ENDPOINTS =====
 
   // Admin Products API
-  app.post(`/applications/${app_path}/api/admin/products`, requireAuth, requireAdmin, async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/admin/products`, requireAuth, requireAdmin, async (req, res) => {
     try {
       const {
         name, description, price, salePrice, category, brand, sku,
@@ -61,7 +61,7 @@ module.exports = (ctx) => {
     }
   });
 
-  app.put(`/applications/${app_path}/api/admin/products/:id`, requireAuth, requireAdmin, async (req, res) => {
+  app.put(`/applications/commerce/${app_path}/api/admin/products/:id`, requireAuth, requireAdmin, async (req, res) => {
     try {
       const product = await dataServe.getByUuid('products', req.params.id);
 
@@ -115,7 +115,7 @@ module.exports = (ctx) => {
     }
   });
 
-  app.delete(`/applications/${app_path}/api/admin/products/:id`, requireAuth, requireAdmin, async (req, res) => {
+  app.delete(`/applications/commerce/${app_path}/api/admin/products/:id`, requireAuth, requireAdmin, async (req, res) => {
     try {
       const product = await dataServe.getByUuid('products', req.params.id);
 
@@ -138,7 +138,7 @@ module.exports = (ctx) => {
   });
 
   // Upload product images
-  app.post(`/applications/${app_path}/api/admin/products/:id/images`, requireAuth, requireAdmin, upload.array('images', 10), async (req, res) => {
+  app.post(`/applications/commerce/${app_path}/api/admin/products/:id/images`, requireAuth, requireAdmin, upload.array('images', 10), async (req, res) => {
     try {
       const product = await dataServe.getByUuid('products', req.params.id);
 

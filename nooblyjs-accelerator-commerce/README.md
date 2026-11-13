@@ -1,7 +1,7 @@
 # NooblyJS Commerce
 
 Three NooblyJS applications in one Express server: an online shop (`ecommerce`), a warehouse management system
-(`warehouse`) and a delivery management system (`delivery`), with a shared sign-in (`/api/auth`).
+(`warehouse`) and a delivery management system (`delivery`), with a shared sign-in (`/applications/commerce/api/auth`).
 
 Status: **early build, remediation largely done.** The three modules start and serve their screens and APIs without
 errors on a fresh start. Data is in memory by default and can be kept on disk with `DATA_PROVIDER=file`. Secrets are read
@@ -74,7 +74,7 @@ Each module's API is under `/applications/<module>/api/`. The main routes (metho
   `POST drivers`, `GET drivers/:driverId`, `PATCH drivers/:driverId/status`, `GET drivers/available`,
   `GET tracking/:orderId`, `GET analytics/overview`, `POST notifications`.
 
-Sign-in for the storefront and admin pages is under `/api/auth`: `POST /login`, `POST /register`, `POST /logout`,
+Sign-in for the storefront and admin pages is under `/applications/commerce/api/auth`: `POST /login`, `POST /register`, `POST /logout`,
 `GET /check`, `GET /google` (when Google is configured). Passport sessions cover this; the JSON API uses bearer tokens.
 See `architecture.md` §4.
 

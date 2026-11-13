@@ -5,7 +5,7 @@
 
 class DeliveryApp {
     constructor() {
-        this.apiBase = '/applications/delivery/api';
+        this.apiBase = '/applications/commerce/delivery/api';
         this.init();
     }
 
@@ -193,7 +193,7 @@ class DeliveryApp {
             top: 20px;
             right: 20px;
             padding: 12px 20px;
-            background: ${type === 'error' ? '#ff4757' : '#2ed573'};
+            background: ${type === 'error' ? '#B42335' : '#2B7F86'};
             color: white;
             border-radius: 6px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.2);

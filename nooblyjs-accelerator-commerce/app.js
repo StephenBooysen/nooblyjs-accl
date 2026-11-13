@@ -1,20 +1,18 @@
 /**
- * @fileoverview The file define and instantiates the various NooblyJS applications.
+ * @fileoverview Runs the commerce accelerator on its own. The launcher at the monorepo root registers it the same way
+ * (see src/register.js); this file is the standalone host for development.
  *
  * @author NooblyJS Core Team
  * @version 1.0.0
- * @since 2025-08-24
  */
 
 'use strict';
 const express = require('express');
 const bodyParser = require('body-parser');
-const session = require('express-session');
-const passport = require('passport');
-const path = require('path');
-const { createSearchAccess } = require('./src/shared/searchAccess');
-const { createDataAccess } = require('./src/shared/dataAccess');
+const { EventEmitter } = require('events');
+const serviceRegistry = require('nooblyjs-core');
 const { loadConfig } = require('./src/config');
+const { register } = require('./src/register');
 
 let config;
 try {
@@ -23,73 +21,16 @@ try {
   console.error(error.message);
   process.exit(1);
 }
-config.warnings.forEach((warning) => console.warn(`[config] ${warning}`));
-const { EventEmitter } = require('events');
 
-// Iniitiate the Web and Api Interface
 const app = express();
-const PORT = config.port;
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
-// Configure session middleware before application initialization
-app.use(session({
-  secret: config.sessionSecret,
-  resave: false,
-  saveUninitialized: false,
-  cookie: { secure: false }
-}));
+const eventEmitter = new EventEmitter();
+serviceRegistry.initialize(app, eventEmitter);
 
-// Configure Passport
-const { configurePassport } = require('./src/auth/passport-config');
-configurePassport(passport);
-app.use(passport.initialize());
-app.use(passport.session());
+const hosted = register(app, serviceRegistry, { eventEmitter, config });
 
-// initiate the event mechanism
-const eventEmitter = new EventEmitter()
-function patchEmitter(eventEmitter) {
-  const originalEmit = eventEmitter.emit;
-  eventEmitter.emit = function () {
-    const eventName = arguments[0];
-    const args = Array.from(arguments).slice(1);
-    console.log(`Caught event: "${eventName}" with arguments:`, args);
-    return originalEmit.apply(this, arguments);
-  };
-}(eventEmitter);
-
-// Initiate the service Registry
-const serviceRegistry = require('nooblyjs-core');
-serviceRegistry.initialize(app,eventEmitter);
-
-const log = serviceRegistry.logger('console');
-const cache = serviceRegistry.cache('memory');
-const dataserve = createDataAccess(serviceRegistry, { namespace: 'app' });
-const filing = serviceRegistry.filing('local');
-const queue = serviceRegistry.queue('memory');
-const scheduling = serviceRegistry.scheduling('memory');
-const searching = createSearchAccess(serviceRegistry, { namespace: 'app' });
-const measuring = serviceRegistry.measuring('memory');
-const notifying = serviceRegistry.notifying('memory');
-const worker = serviceRegistry.working('memory');
-const workflow = serviceRegistry.workflow('memory');
-
-const warehouse = require('./src/warehouse/index');
-warehouse({express: app},eventEmitter,serviceRegistry);
-
-const ecommerce = require('./src/ecommerce/index');
-ecommerce({express: app},eventEmitter,serviceRegistry);
-
-const deivery = require('./src/delivery/index');
-deivery({express: app},eventEmitter,serviceRegistry);
-
-// Authentication routes
-const authRoutes = require('./src/auth/routes');
-app.use('/api/auth', authRoutes);
-
-// Launch the application manager
-app.use(express.static(path.join(__dirname, 'public')));
-
-app.listen(PORT, () => {
-  console.log(`NooblyJS Commerce running on port ${PORT}`);
+app.listen(config.port, () => {
+  console.log(`NooblyJS Commerce running on port ${config.port} at ${hosted.mountPath}`);
 });
