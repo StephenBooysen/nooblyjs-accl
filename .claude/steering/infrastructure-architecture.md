@@ -1,3 +1,10 @@
+---
+type: "Architecture"
+title: "Architecture: Noobly Cloud (Infrastructure accelerator)"
+description: "How the Noobly Cloud infrastructure accelerator is built: launcher contract, providers, operations, records and UI."
+tags: ["infrastructure", "architecture"]
+---
+
 # Architecture: Noobly Cloud (Infrastructure accelerator)
 
 How the accelerator is built. What it does and for whom is `infrastructure-product.md`; the build order is `infrastructure-roadmap.md`. Section

@@ -1,3 +1,11 @@
+---
+type: "Todo List"
+title: "Delivery Management System - Implementation Todo List"
+description: "Implementation checklist for the delivery management system, by phase."
+tags: ["delivery", "todo"]
+status: "draft"
+---
+
 # Delivery Management System - Implementation Todo List
 
 ## Phase 1: Core Foundation & Order Management

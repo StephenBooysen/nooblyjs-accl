@@ -1,3 +1,10 @@
+---
+type: "Product Definition"
+title: "Product: Noobly Cloud (Infrastructure accelerator)"
+description: "What Noobly Cloud does, for whom, every screen, and who may do what."
+tags: ["infrastructure", "product"]
+---
+
 # Product: Noobly Cloud (Infrastructure accelerator)
 
 What this accelerator is, who it is for, and what each screen must do. The UI designs it is built from are in

@@ -1,3 +1,10 @@
+---
+type: "Requirements Document"
+title: "E-Commerce Platform Requirements Document"
+description: "Functional and technical requirements for the storefront and back-office of the e-commerce platform."
+tags: ["ecommerce", "requirements"]
+---
+
 # E-Commerce Platform Requirements Document
 
 ## 1. Executive Summary
@@ -111,7 +118,7 @@ To develop a full-featured e-commerce platform that enables businesses to sell p
 **FR-013: Checkout Process**
 - Guest checkout option
 - Registered user checkout
-- Multiple checkout steps: Cart Review ’ Shipping ’ Payment ’ Confirmation
+- Multiple checkout steps: Cart Review â€™ Shipping â€™ Payment â€™ Confirmation
 - Shipping address management
 - Billing address (same as shipping or different)
 - Shipping method selection with costs
@@ -187,7 +194,7 @@ To develop a full-featured e-commerce platform that enables businesses to sell p
 
 **FR-022: Order Processing**
 - View all orders with filtering and search
-- Order status management (Created ’ Processing ’ Shipped ’ Delivered ’ Cancelled)
+- Order status management (Created â€™ Processing â€™ Shipped â€™ Delivered â€™ Cancelled)
 - Order details view (customer info, items, payment, shipping)
 - Print packing slips and shipping labels
 - Partial shipment support

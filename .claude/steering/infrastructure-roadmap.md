@@ -1,3 +1,10 @@
+---
+type: "Roadmap"
+title: "Roadmap: Noobly Cloud (Infrastructure accelerator)"
+description: "The build order for Noobly Cloud, with phases and exit checks."
+tags: ["infrastructure", "roadmap"]
+---
+
 # Roadmap: Noobly Cloud (Infrastructure accelerator)
 
 The order Noobly Cloud is built in. What and why: `infrastructure-product.md`. How: `infrastructure-architecture.md` (§ numbers below point

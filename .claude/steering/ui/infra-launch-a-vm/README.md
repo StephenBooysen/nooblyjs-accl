@@ -1,3 +1,10 @@
+---
+type: "Design Mockup"
+title: "Launch a Linux VM — design reference"
+description: "Reference design mockup of the Launch a Linux VM screen of Noobly Cloud. Reference only; not production code."
+tags: ["infrastructure", "ui-mockup"]
+---
+
 # Launch a Linux VM — design reference
 
 This is a design mockup created in a visual design tool, exported as a

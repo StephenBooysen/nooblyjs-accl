@@ -1,3 +1,10 @@
+---
+type: "Technical Usage Guide"
+title: "NooblyJS Core - Technical Usage Guide"
+description: "How to use the NooblyJS Core framework: setup, services and configuration, with examples."
+tags: ["nooblyjs-core", "reference"]
+---
+
 # NooblyJS Core - Technical Usage Guide
 
 ## Overview

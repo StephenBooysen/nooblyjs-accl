@@ -1,3 +1,10 @@
+---
+type: "Design Mockup"
+title: "Databases — design reference"
+description: "Reference design mockup of the Databases screen of Noobly Cloud. Reference only; not production code."
+tags: ["infrastructure", "ui-mockup"]
+---
+
 # Databases — design reference
 
 This is a design mockup created in a visual design tool, exported as a

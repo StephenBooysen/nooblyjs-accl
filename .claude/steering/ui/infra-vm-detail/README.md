@@ -1,3 +1,10 @@
+---
+type: "Design Mockup"
+title: "VM detail · web-01 — design reference"
+description: "Reference design mockup of the VM detail · web-01 screen of Noobly Cloud. Reference only; not production code."
+tags: ["infrastructure", "ui-mockup"]
+---
+
 # VM detail · web-01 — design reference
 
 This is a design mockup created in a visual design tool, exported as a

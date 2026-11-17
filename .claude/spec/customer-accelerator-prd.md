@@ -1,3 +1,10 @@
+---
+type: "Product Requirements Document"
+title: "Customer Accelerator — Product Requirements Document"
+description: "What the customer accelerator must do, for whom, and in what phases."
+tags: ["customer-accelerator", "prd"]
+---
+
 # Customer Accelerator — Product Requirements Document
 
 | | |

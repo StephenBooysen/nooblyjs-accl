@@ -1,3 +1,10 @@
+---
+type: "Requirements Document"
+title: "Delivery Management System (DMS) Requirements Document"
+description: "Requirements for a delivery management system: drivers, order assignment, tracking, routing and customer communication."
+tags: ["delivery", "requirements"]
+---
+
 # Delivery Management System (DMS) Requirements Document
 
 ## 1. Executive Summary

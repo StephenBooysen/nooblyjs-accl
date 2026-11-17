@@ -1,3 +1,10 @@
+---
+type: "Requirements Document"
+title: "Warehouse Management System (WMS) Requirements Document"
+description: "Requirements for a warehouse management system: inbound receiving, inventory, fulfilment and outbound shipping."
+tags: ["warehouse", "requirements"]
+---
+
 # Warehouse Management System (WMS) Requirements Document
 
 ## 1. Executive Summary
@@ -30,7 +37,7 @@ The system covers all warehouse operations from supplier receipt to customer del
 
 #### 3.1.2 Location Management
 - **Zone Configuration**: Receiving, storage, picking, packing, shipping zones
-- **Location Hierarchy**: Warehouse ’ Zone ’ Aisle ’ Bay ’ Shelf ’ Bin
+- **Location Hierarchy**: Warehouse â€™ Zone â€™ Aisle â€™ Bay â€™ Shelf â€™ Bin
 - **Location Types**: Reserve, forward pick, bulk, quarantine, returns
 - **Location Attributes**: Temperature control, security level, product restrictions
 - **Dynamic Location Assignment**: Automatic slot assignment based on product velocity

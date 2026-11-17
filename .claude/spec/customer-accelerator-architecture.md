@@ -1,3 +1,10 @@
+---
+type: "Architecture"
+title: "Customer Accelerator — Architecture"
+description: "How the customer accelerator is structured: modules, services, data and APIs."
+tags: ["customer-accelerator", "architecture"]
+---
+
 # Customer Accelerator — Architecture
 
 | | |

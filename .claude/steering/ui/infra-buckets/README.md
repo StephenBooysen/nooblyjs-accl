@@ -1,3 +1,10 @@
+---
+type: "Design Mockup"
+title: "Buckets — design reference"
+description: "Reference design mockup of the Buckets screen of Noobly Cloud. Reference only; not production code."
+tags: ["infrastructure", "ui-mockup"]
+---
+
 # Buckets — design reference
 
 This is a design mockup created in a visual design tool, exported as a

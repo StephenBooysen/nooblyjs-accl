@@ -1,3 +1,11 @@
+---
+type: "Plan"
+title: "Build Prompts: eCommerce, Warehouse and Delivery"
+description: "Build prompts that ask for the eCommerce, warehouse and delivery applications to be built from their requirements documents."
+tags: ["commerce", "plan"]
+status: "draft"
+---
+
 Ok, its time to think really hard about this development. I would like you to build the eCommerce application in the @src/ecommerce folder based on the PRD @"docs/eCommerce Requirements Document.md". Please us the @docs/nooblyjs-core-usage-guide to leverage the noobly-services. Please based the application on a shopify theme.
 
 Ok, its time to think really hard about this development. I would like you to build the warehouse management application in the @src/warehouse folder based on the PRD @"docs/warehouse-requirements-document.md". Please us the @docs/nooblyjs-core-usage-guide to leverage the noobly-services. Please create this project in the @src/warehouse folder.

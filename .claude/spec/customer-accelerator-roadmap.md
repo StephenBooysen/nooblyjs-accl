@@ -1,3 +1,10 @@
+---
+type: "Roadmap"
+title: "Customer Accelerator — Build Roadmap"
+description: "The ordered build phases for the customer accelerator, with exit checks."
+tags: ["customer-accelerator", "roadmap"]
+---
+
 # Customer Accelerator — Build Roadmap
 
 | | |

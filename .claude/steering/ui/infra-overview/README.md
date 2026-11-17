@@ -1,3 +1,10 @@
+---
+type: "Design Mockup"
+title: "Overview — design reference"
+description: "Reference design mockup of the Overview screen of Noobly Cloud. Reference only; not production code."
+tags: ["infrastructure", "ui-mockup"]
+---
+
 # Overview — design reference
 
 This is a design mockup created in a visual design tool, exported as a

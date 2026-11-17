@@ -1,3 +1,10 @@
+---
+type: "Design Mockup"
+title: "Virtual machines — design reference"
+description: "Reference design mockup of the Virtual machines screen of Noobly Cloud. Reference only; not production code."
+tags: ["infrastructure", "ui-mockup"]
+---
+
 # Virtual machines — design reference
 
 This is a design mockup created in a visual design tool, exported as a
