@@ -12,24 +12,44 @@ numbers here are referred to from both.
 
 ## 1. Shape in one picture
 
-```
- Browser (NooblyJS frame, native ES modules, no React, no build)
-   public/js/module.js ─ routes ─► public/js/pages/*.js ─ ctx.api ─┐      ctx.sse ◄── live events
-                                                                   │
- ──────────────────────────────── HTTP ────────────────────────────┼───────────────────────────────
-                                                                   ▼
- Express (the host's app)   <mountPath>/api/v1/*  (src/routes)    <mountPath>/hooks/*  (no session; signed)
-                                   │
-                         services (src/services)  ── emit events ──► host.events ──► SSE ──► pages
-                         ├─ vms · endpoints · apps · databases · buckets · accounts
-                         ├─ operations engine (queue, steps, resume)       ◄── scheduled jobs (sync, DNS, certs)
-                         ├─ estimate (shared with the browser)            secrets (encrypted)
-                         │
-             ┌───────────┴────────────┬──────────────────────┐
-             ▼                        ▼                      ▼
-     records (host.store,      provider adapters        remote runner (SSH)
-     FsStore, Markdown+YAML)   mock · gcp · aws         ──► VM: Docker + Caddy (HTTPS)
-     data/infrastructure/      └─► cloud SDKs ──► GCP / AWS
+```mermaid
+flowchart TB
+  subgraph BROWSER["Browser: NooblyJS frame, native ES modules, no React, no build"]
+    MODJS["public/js/module.js"]
+    PAGES["public/js/pages/*.js"]
+    SSEC["ctx.sse: live events"]
+  end
+
+  subgraph EXPRESS["Express: the host's app"]
+    API["/api/v1/* routes (src/routes)"]
+    HOOKS["/hooks/* (no session; signed)"]
+    SVC["services (src/services)"]
+    EVENTS["host.events"]
+    OPS["operations engine (queue, steps, resume)"]
+    SCHED["scheduled jobs (sync, DNS, certs)"]
+    EST["estimate (shared with the browser)"]
+    SEC["secrets (encrypted)"]
+    REC["records: host.store, FsStore, Markdown+YAML"]
+    PROV["provider adapters: mock, gcp, aws"]
+    RUN["remote runner (SSH)"]
+  end
+
+  MODJS -->|routes| PAGES
+  PAGES -->|ctx.api over HTTP| API
+  API --> SVC
+  HOOKS --> SVC
+  SVC -->|emit events| EVENTS
+  EVENTS -->|SSE| SSEC
+  SSEC --> PAGES
+  SVC --> OPS
+  SCHED --> OPS
+  SVC --> EST
+  SVC --> SEC
+  SVC --> REC
+  SVC --> PROV
+  OPS --> RUN
+  PROV -->|cloud SDKs| CLOUD["GCP / AWS"]
+  RUN -->|SSH| VM["VM: Docker + Caddy (HTTPS)"]
 ```
 
 Three rules hold everywhere:
