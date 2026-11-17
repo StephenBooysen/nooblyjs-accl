@@ -10,7 +10,7 @@ host's configuration.
 
 > Status: **v0.3.0 — Phase 2 (marketing MVP)**. The customer and marketing modules are complete,
 > each with a REST API and admin UI. The contact centre (Phase 3) currently mounts a status page
-> only. See `.claude/spec/customer-accelerator-roadmap.md`.
+> only. See `../.claude/spec/customer-accelerator-roadmap.md`.
 
 ## Quick start
 

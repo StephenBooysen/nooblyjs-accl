@@ -1,6 +1,6 @@
 # Architecture: Noobly Cloud (Infrastructure accelerator)
 
-How the accelerator is built. What it does and for whom is `product.md`; the build order is `roadmap.md`. Section
+How the accelerator is built. What it does and for whom is `infrastructure-product.md`; the build order is `infrastructure-roadmap.md`. Section
 numbers here are referred to from both.
 
 ## 1. Shape in one picture

@@ -1,8 +1,8 @@
 # Product: Noobly Cloud (Infrastructure accelerator)
 
 What this accelerator is, who it is for, and what each screen must do. The UI designs it is built from are in
-`.claude/steering/ui/` (ten mockups, listed in §6). How it is built is `architecture.md`; the order it is built in is
-`roadmap.md`.
+`.claude/steering/ui/` (ten mockups, listed in §6). How it is built is `infrastructure-architecture.md`; the order it is built in is
+`infrastructure-roadmap.md`.
 
 ## 1. In one paragraph
 

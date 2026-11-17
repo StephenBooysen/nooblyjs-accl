@@ -7,7 +7,7 @@ put them on public addresses, and see what everything costs.
 Status: **roadmap phase 2 on the mock cloud** — nothing is created in GCP or AWS yet. Built: the Overview, cloud
 accounts, the activity log, and virtual machines (launch, stop, start, restart, delete, health, SSH keys), run as
 operations that pick up again after a restart. The GCP and AWS adapters need sandbox accounts to finish. App, database
-and bucket screens are routed placeholders until their phases. See `.claude/steering/roadmap.md` for what comes next.
+and bucket screens are routed placeholders until their phases. See `../.claude/steering/infrastructure-roadmap.md` for what comes next.
 
 ## Run it on its own
 
@@ -34,7 +34,7 @@ const hosted = await register(app, serviceRegistry, { mountPath: '/infrastructur
 
 `host` is what the launcher shares: sign-in, permissions, audit, events, a file store, the frame page. Until a
 launcher has its own, `nooblyjs-accelerator-infrastructure/host` provides a development one (`createDevLauncher()`).
-The full contract is in `.claude/steering/architecture.md` §3.
+The full contract is in `../.claude/steering/infrastructure-architecture.md` §3.
 
 ## Configuration
 

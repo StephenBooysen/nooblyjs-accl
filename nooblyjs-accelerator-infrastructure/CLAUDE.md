@@ -8,10 +8,10 @@ API (`/infrastructure/api/v1`) are mounted by a launcher at `/infrastructure`.
 
 ## Read first
 
-- `.claude/steering/product.md`: what it does, for whom, every screen, who may do what.
-- `.claude/steering/architecture.md`: how it is built (the launcher contract, providers, operations, records, UI).
-- `.claude/steering/roadmap.md`: the build order. **Tick its checkboxes in the same change as the work.**
-- `.claude/steering/ui/`: the mockups the screens are built from (reference only; never copy their React runtime).
+- `../.claude/steering/infrastructure-product.md`: what it does, for whom, every screen, who may do what.
+- `../.claude/steering/infrastructure-architecture.md`: how it is built (the launcher contract, providers, operations, records, UI).
+- `../.claude/steering/infrastructure-roadmap.md`: the build order. **Tick its checkboxes in the same change as the work.**
+- `../.claude/steering/ui/`: the mockups the screens are built from (reference only; never copy their React runtime).
 
 ## Rules
 

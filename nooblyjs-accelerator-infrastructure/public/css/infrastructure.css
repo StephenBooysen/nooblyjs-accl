@@ -1,7 +1,7 @@
 /* Noobly Cloud's own styles: only what the shared UI kit doesn't cover (architecture.md §11.4). Every selector is
    scoped to the frame's content area for this accelerator ([data-module="infrastructure"]), and only the kit's
    tokens are used, plus the app tokens below for colours the kit lacks. Values come from the mockups in
-   .claude/steering/ui/, whose palette is the kit's palette. */
+   ../../../.claude/steering/ui/, whose palette is the kit's palette. */
 
 /* App tokens: the cloud badges (.prov-g / .prov-a) and database engine badges (.eng-my / .eng-mg) in the mockups. */
 [data-module="infrastructure"] {

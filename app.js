@@ -51,9 +51,9 @@ const workflow = serviceRegistry.workflow('memory');
 
 /**
  * Loads the accelerators. Each one is an ES module that exports register(app, serviceRegistry, { mountPath,
- * dataDir, host }) and mounts its screens and API under mountPath (nooblyjs-accelerator-infrastructure/.claude/
- * steering/architecture.md §3). Until this launcher has a host of its own (sign-in, audit, events, the frame), it
- * uses the infrastructure accelerator's development host, which signs anyone in as anyone at /login and refuses to
+ * dataDir, host }) and mounts its screens and API under mountPath (.claude/steering/infrastructure-architecture.md §3).
+ * Until this launcher has a host of its own (sign-in, audit, events, the frame), it uses the infrastructure
+ * accelerator's development host, which signs anyone in as anyone at /login and refuses to
  * run with NODE_ENV=production.
  */
 async function loadAccelerators() {

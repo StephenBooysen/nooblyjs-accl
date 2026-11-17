@@ -1,6 +1,6 @@
 # Roadmap: Noobly Cloud (Infrastructure accelerator)
 
-The order Noobly Cloud is built in. What and why: `product.md`. How: `architecture.md` (§ numbers below point
+The order Noobly Cloud is built in. What and why: `infrastructure-product.md`. How: `infrastructure-architecture.md` (§ numbers below point
 there). Tick a box in the same change as the work. Each phase ends with its **exit check**: the phase is not done until
 that passes.
 
