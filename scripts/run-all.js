@@ -26,7 +26,7 @@ if (!script) {
 
 const packages = fs
   .readdirSync(root, { withFileTypes: true })
-  .filter((d) => d.isDirectory() && d.name.startsWith('nooblyjs-accelerator-'))
+  .filter((d) => d.isDirectory() && d.name.startsWith('nooblyjs-accel-'))
   .map((d) => d.name)
   .filter((name) => fs.existsSync(path.join(root, name, 'package.json')))
   .filter((name) => filters.length === 0 || filters.some((f) => name.includes(f)))
@@ -47,7 +47,7 @@ function run(name, env) {
       shell: process.platform === 'win32',
     });
     if (parallel) {
-      const tag = `[${name.replace('nooblyjs-accelerator-', '')}] `;
+      const tag = `[${name.replace('nooblyjs-accel-', '')}] `;
       const prefix = (stream, out) => {
         let buffer = '';
         stream.on('data', (chunk) => {
