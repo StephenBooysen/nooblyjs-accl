@@ -20,7 +20,9 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
 });
 
-const JWT_SECRET = process.env.JWT_SECRET || 'ecommerce-secret-key';
+// Set JWT_SECRET in every real deployment. Without it, a random per-process secret is used,
+// so tokens stop working after a restart.
+const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex');
 
 /**
  * Configures and registers eCommerce routes with the Express application.
@@ -795,7 +797,12 @@ module.exports = (options, eventEmitter, services) => {
   // Handle Stripe webhooks
   app.post(`/applications/${app_path}/api/payments/webhook`, express.raw({type: 'application/json'}), async (req, res) => {
     const sig = req.headers['stripe-signature'];
-    const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET || 'whsec_test_secret';
+    // Fail closed: a known fallback secret would let anyone forge Stripe events.
+    const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
+    if (!endpointSecret) {
+      logger.error('STRIPE_WEBHOOK_SECRET is not set; rejecting Stripe webhook.');
+      return res.status(503).send('Webhook not configured');
+    }
 
     let event;
 

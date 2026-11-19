@@ -13,6 +13,7 @@ const session = require('express-session');
 const passport = require('passport');
 const path = require('path');
 const { EventEmitter } = require('events');
+const crypto = require('crypto');
 
 // Iniitiate the Web and Api Interface
 const app = express();
@@ -21,8 +22,13 @@ app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
 // Configure session middleware before application initialization
+// Set SESSION_SECRET in every real deployment. Without it, a random per-process secret is used,
+// so sessions end when the process restarts (safe, but inconvenient).
+const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
+if (!process.env.SESSION_SECRET) console.warn('[security] SESSION_SECRET is not set; using a random per-process session secret.');
+
 app.use(session({
-  secret: 'ecommerce-secret',
+  secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   cookie: { secure: false }

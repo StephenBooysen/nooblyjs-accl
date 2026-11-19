@@ -23,13 +23,19 @@ const UserManager = require('./components/userManager');
  * @return {Object} Authentication service instance
  */
 module.exports = (options, eventEmitter, serviceRegistry) => {
+  // The bootstrap admin password comes from ADMIN_PASSWORD. Without it, a random one is generated for this run.
+  const adminPassword = process.env.ADMIN_PASSWORD || crypto.randomBytes(12).toString('base64url');
+  if (!process.env.ADMIN_PASSWORD) {
+    console.warn(`[security] ADMIN_PASSWORD is not set. Generated bootstrap admin password for this run: ${adminPassword}`);
+  }
+
   // Initialize auth provider from NooblyJS Core
   const authProvider = serviceRegistry.authservice('memory', {
     createDefaultAdmin: true,
     defaultAdminUser: {
       username: 'admin',
       email: 'admin@blog.local',
-      password: 'admin123',
+      password: adminPassword,
       role: 'admin'
     },
     sessionTimeout: 3600000, // 1 hour

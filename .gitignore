@@ -141,3 +141,6 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# Secrets store: encryption key and encrypted values. Never commit.
+.application/data/infrastructure/secrets/
