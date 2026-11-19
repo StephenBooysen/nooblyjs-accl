@@ -1,5 +1,5 @@
 // Noobly Cloud's UI module for the launcher's frame (architecture.md §11.1): the route table the frame matches,
-// relative to the mount path (product.md §5). The launcher draws the rail, the sidebar (from register()'s `nav`), the
+// relative to the mount path (product.md §5). The launcher draws the rail, the sidebar (from mount()'s `nav`), the
 // person and the chat; this accelerator draws the content area only. Pages take render(view, { params, query, ctx,
 // route }); the frame aborts ctx.signal when the person leaves, which stops their requests and timers. The first
 // matching route wins, so /vms/new comes before /vms/:name.

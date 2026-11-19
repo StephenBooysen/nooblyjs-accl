@@ -11,15 +11,15 @@ import { enabledProviders } from '../index.js';
 
 const API = '/infrastructure/api/v1';
 
-test(`register() mounts the API under the mount path and describes itself (Express ${EXPRESS_MAJOR})`, async () => {
+test(`mount() mounts the API under the mount path and describes itself (Express ${EXPRESS_MAJOR})`, async () => {
   const t = await startApp();
   try {
-    assert.equal(t.registerError, null);
+    assert.equal(t.mountError, null);
     const about = await t.get(`${API}/about`, { as: 'naledi-k' });
     assert.equal(about.status, 200);
     assert.deepEqual({ name: about.json.name, mountPath: about.json.mountPath, providers: about.json.providers }, { name: 'infrastructure', mountPath: '/infrastructure', providers: ['mock'] });
     assert.match(about.json.version, /^\d+\.\d+\.\d+$/);
-    for (const key of ['name', 'label', 'title', 'icon', 'mountPath', 'ui', 'nav', 'status', 'services', 'seed', 'close', 'idle']) assert.ok(t.hosted[key], key);
+    for (const key of ['name', 'label', 'title', 'icon', 'mountPath', 'ui', 'nav', 'status', 'services', 'seed', 'shutdown', 'close', 'idle']) assert.ok(t.hosted[key], key);
   } finally {
     await t.close();
   }
@@ -84,7 +84,7 @@ test('an error inside an async route reaches the error handler, in the error sha
     assert.equal(res.status, 500);
     assert.equal(res.json.error.code, 'internal_error');
     assert.doesNotMatch(res.text, /disk on fire/, 'a server fault never leaks its message');
-    assert.ok(t.serverManager.lines.some((l) => l.level === 'error' && /disk on fire/.test(l.message)), 'and it is logged');
+    assert.ok(t.serviceRegistry.lines.some((l) => l.level === 'error' && /disk on fire/.test(l.message)), 'and it is logged');
   } finally {
     await t.close();
   }
@@ -104,18 +104,50 @@ test('everything is written inside the accelerator\'s own folder', async () => {
 
 test('a bad start throws before anything is mounted', async () => {
   for (const [why, options] of [
+    ['no EventEmitter', { eventEmitter: null }],
+    ['an EventEmitter that cannot emit', { eventEmitter: {} }],
     ['a host without events', { changeHost: (h) => ({ ...h, events: undefined }) }],
     ['a host without a frame', { changeHost: (h) => ({ ...h, frame: undefined }) }],
-    ['a serverManager nobody initialised', { serverManager: { initialized: false } }],
+    ['a serviceRegistry nobody initialised', { serviceRegistry: { initialized: false } }],
     ['a mount path that is not a path', { mountPath: 'infrastructure' }],
   ]) {
-    const t = await startApp(options).catch((err) => ({ registerError: err, close: async () => {} }));
+    const t = await startApp(options).catch((err) => ({ mountError: err, close: async () => {} }));
     try {
-      assert.ok(t.registerError, why);
+      assert.ok(t.mountError, why);
       if (t.get) assert.equal((await t.get(`${API}/about`, { as: 'stevie' })).text, FALLBACK, why);
     } finally {
       await t.close();
     }
+  }
+});
+
+test('every event goes to the launcher\'s EventEmitter as well as host.events, and a failing listener breaks nothing', async () => {
+  const t = await startApp();
+  try {
+    const seen = [];
+    t.eventEmitter.on('infrastructure.account.connected', (payload) => seen.push(payload));
+    t.eventEmitter.on('infrastructure.operation.queued', () => { throw new Error('listener on fire'); });
+    const res = await t.post(`${API}/accounts`, { as: 'stevie', body: { cloud: 'gcp', name: 'stevie-dev', projectId: 'stevie-dev-1', defaultRegion: 'europe-west2', credentials: JSON.stringify({ type: 'service_account', project_id: 'stevie-dev', private_key: '-----BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----\n' }) } });
+    assert.equal(res.status, 202);
+    await t.hosted.idle();
+    assert.equal(seen.length, 1);
+    assert.deepEqual([seen[0].system, seen[0].name], ['infrastructure', 'stevie-dev']);
+    assert.ok(t.eventLog.some((e) => e.type === 'infrastructure.account.connected'), 'host.events still gets it');
+    assert.equal((await t.get(`${API}/accounts/stevie-dev`, { as: 'stevie' })).json.state, 'connected');
+    assert.ok(t.serviceRegistry.lines.some((l) => l.level === 'warn' && /listener on fire/.test(l.message)), 'the failure is logged');
+  } finally {
+    await t.close();
+  }
+});
+
+test('shutdown() is idempotent and close() is the same function', async () => {
+  const t = await startApp();
+  try {
+    assert.equal(t.hosted.close, t.hosted.shutdown);
+    await Promise.all([t.hosted.shutdown(), t.hosted.shutdown()]);
+    await t.hosted.shutdown();
+  } finally {
+    await t.close();
   }
 });
 
@@ -128,7 +160,7 @@ test('INFRA_PROVIDERS names the clouds this install may use, and an unknown one 
   try {
     const t = await startApp();
     try {
-      assert.match(t.registerError?.message ?? '', /INFRA_PROVIDERS/);
+      assert.match(t.mountError?.message ?? '', /INFRA_PROVIDERS/);
       assert.equal((await t.get(`${API}/about`, { as: 'stevie' })).text, FALLBACK);
     } finally {
       await t.close();
@@ -139,10 +171,10 @@ test('INFRA_PROVIDERS names the clouds this install may use, and an unknown one 
   }
 });
 
-test('the accelerator never initialises the serverManager, and uses the launcher\'s logging and queueing', async () => {
+test('the accelerator never initialises the serviceRegistry, and uses the launcher\'s logging and queueing', async () => {
   const t = await startApp();
   try {
-    assert.deepEqual(t.serverManager.calls.map((c) => `${c.service}:${c.instanceName}`).sort(), ['logging:infrastructure', 'queueing:infrastructure']);
+    assert.deepEqual(t.serviceRegistry.calls.map((c) => `${c.service}:${c.instanceName}`).sort(), ['logging:infrastructure', 'queueing:infrastructure']);
   } finally {
     await t.close();
   }

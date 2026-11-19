@@ -1,6 +1,6 @@
 // Standalone mode (architecture.md §3.3): runs this accelerator on its own, for development. It does what a launcher
-// does (an Express app, the nooblyjs-core serverManager, the shell and the /ui kit, a host with a dev sign-in, from
-// src/host/standalone.js) and then calls the same register() a launcher calls. Launchers load index.js instead.
+// does (an Express app, the nooblyjs-core serviceRegistry, the shell and the /ui kit, a host with a dev sign-in, from
+// src/host/standalone.js) and then calls the same mount() a launcher calls. Launchers load index.js instead.
 //
 //   npm start                      the screens at http://localhost:11008/infrastructure, the API at /infrastructure/api/v1
 //   npm run seed [-- --reset]      writes the seed story into data/infrastructure/ and exits
@@ -11,8 +11,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { EventEmitter } from 'node:events';
 import express from 'express';
-import { register } from './index.js';
+import { mount } from './index.js';
 import { createDevLauncher } from './src/host/standalone.js';
 
 const require = createRequire(import.meta.url);
@@ -31,15 +32,16 @@ const dataDir = path.join(dataRoot, MOUNT_PATH.slice(1));
 await fs.mkdir(dataDir, { recursive: true });
 const firstStart = (await fs.readdir(dataDir)).length === 0;
 
-// nooblyjs-core: the launcher owns the serverManager and initialises it once.
-const serverManager = require('nooblyjs-core');
+// nooblyjs-core: the launcher owns the serviceRegistry and initialises it once.
+const serviceRegistry = require('nooblyjs-core');
 
 const app = express();
 app.disable('x-powered-by');
-serverManager.initialize(app, undefined, {
+const eventEmitter = new EventEmitter();
+serviceRegistry.initialize(app, eventEmitter, {
   security: { apiKeyAuth: { requireApiKey: false, apiKeys: [] }, servicesAuth: { requireLogin: false } },
 });
-const log = serverManager.logger(serverManager.getDefaultProviderType('logging'), { instanceName: 'standalone' });
+const log = serviceRegistry.logger(serviceRegistry.getDefaultProviderType('logging'), { instanceName: 'standalone' });
 
 // The launcher's order: CSRF and sign-in → shell and UI kit → accelerators → 404.
 const launcher = createDevLauncher({ express, rootDir: dataRoot, log });
@@ -47,7 +49,7 @@ launcher.mount(app);
 
 let hosted;
 try {
-  hosted = await register(app, serverManager, { mountPath: MOUNT_PATH, dataDir, host: launcher.hostFor(dataDir) });
+  hosted = await mount(app, eventEmitter, serviceRegistry, { mountPath: MOUNT_PATH, dataDir, host: launcher.hostFor(dataDir) });
   launcher.add(hosted, MOUNT_PATH);
   log.info(`mounted ${hosted.name} at ${MOUNT_PATH}`);
 } catch (err) {
@@ -58,8 +60,8 @@ try {
 if (args.has('--seed')) {
   await hosted.seed({ reset: args.has('--reset') });
   log.info(`seeded ${path.relative(ROOT, dataDir)}${args.has('--reset') ? ' (reset)' : ''}`);
-  await hosted.close();
-  await serverManager.shutdown?.();
+  await hosted.shutdown();
+  await serviceRegistry.shutdown?.();
   process.exit(0);
 }
 if (firstStart) {
@@ -86,8 +88,8 @@ async function stop(signal) {
   stopping = true;
   log.info(`${signal}: stopping`);
   server.close();
-  await hosted.close();
-  await serverManager.shutdown?.();
+  await hosted.shutdown();
+  await serviceRegistry.shutdown?.();
   process.exit(0);
 }
 process.on('SIGINT', () => stop('SIGINT'));

@@ -1,4 +1,4 @@
-// A launcher shaped like the accelerators' ../app.js (CommonJS, Express 4, the real nooblyjs-core serverManager
+// A launcher shaped like the accelerators' ../app.js (CommonJS, Express 4, the real nooblyjs-core serviceRegistry
 // initialised with an EventEmitter), loading this accelerator by its package name the way ../app.js does. Run by
 // test/launcher.test.js in a child process; prints what it saw as one line of JSON and exits.
 'use strict';
@@ -11,16 +11,17 @@ const serviceRegistry = require('nooblyjs-core');
 
 (async () => {
   const app = express();
-  serviceRegistry.initialize(app, new EventEmitter());
+  const eventEmitter = new EventEmitter();
+  serviceRegistry.initialize(app, eventEmitter);
 
   const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nooblyjs-launcher-'));
-  const { register } = await import('nooblyjs-accelerator-infrastructure');
+  const { mount } = await import('nooblyjs-accelerator-infrastructure');
   const { createDevLauncher } = await import('nooblyjs-accelerator-infrastructure/host');
   const quiet = { info() {}, warn() {}, error() {} };
   const launcher = createDevLauncher({ express, rootDir: dataRoot, log: quiet });
   launcher.mount(app);
   const dataDir = path.join(dataRoot, 'infrastructure');
-  const hosted = await register(app, serviceRegistry, { mountPath: '/infrastructure', dataDir, host: launcher.hostFor(dataDir) });
+  const hosted = await mount(app, eventEmitter, serviceRegistry, { mountPath: '/infrastructure', dataDir, host: launcher.hostFor(dataDir) });
   launcher.add(hosted, '/infrastructure');
 
   const server = app.listen(0);
@@ -34,7 +35,7 @@ const serviceRegistry = require('nooblyjs-core');
     if (url.endsWith('/about')) seen.about = await res.json();
   }
   server.close();
-  await hosted.close();
+  await hosted.shutdown();
   await serviceRegistry.shutdown?.();
   fs.rmSync(dataRoot, { recursive: true, force: true });
   process.stdout.write(`${JSON.stringify(seen)}\n`);

@@ -1,10 +1,11 @@
-// Noobly Cloud as an accelerator (architecture.md §3). A launcher (the accelerators ../app.js, the NooblyJS AI host,
-// or server.js when this repo runs on its own) imports this file and calls register() with its Express app, its
-// nooblyjs-core serverManager and what it shares (`host`); the tests do the same with test/fixtures/host.js.
-// Nothing here listens on a port.
+// Noobly Cloud as an accelerator (architecture.md §3). A launcher (the accelerators ../app.js, NooblyJS Cloud, or
+// server.js when this repo runs on its own) imports this file and calls mount() with its Express app, its shared
+// EventEmitter, its nooblyjs-core ServiceRegistry and what it shares (`host`), the same entry point every NooblyJS
+// accelerator exports (`mount(app, eventEmitter, serviceRegistry, options)`). The tests do the same with
+// test/fixtures/host.js. Nothing here listens on a port.
 //
 // The accelerator owns its screens: the UI is a module (public/js/module.js) that the launcher's frame loads into its
-// content area, and the launcher draws the rail and the sidebar from the description register() returns.
+// content area, and the launcher draws the rail and the sidebar from the description mount() returns.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -54,24 +55,30 @@ export function enabledProviders(value = process.env.INFRA_PROVIDERS) {
 const envNumber = (name, fallback) => (process.env[name] === undefined || process.env[name] === '' ? fallback : Number(process.env[name]));
 
 /**
+ * Mounts Noobly Cloud on the launcher's app: the API at `<mountPath>/api/v1`, the browser files and the pages.
+ * Every event it emits goes to `host.events` (the launcher's activity and event stream) and to `eventEmitter`, so
+ * other code in the launcher can listen for `infrastructure.*` events.
+ *
  * @param {import('express').Express} app   the launcher's app (Express 4 or 5)
- * @param {object} serverManager            nooblyjs-core ServiceRegistry, already initialised by the launcher
+ * @param {import('node:events').EventEmitter} eventEmitter   the launcher's shared emitter (the one it gave serviceRegistry.initialize())
+ * @param {object} serviceRegistry          nooblyjs-core ServiceRegistry, already initialised by the launcher
  * @param {object} options
  * @param {string} [options.mountPath]
  * @param {string} options.dataDir
  * @param {object} options.host
  * @param {number} [options.mockStepMs]   how long one unit of mock cloud work takes (INFRA_MOCK_STEP_MS; tests pass 0)
  * @param {number} [options.jobCheckMs]   how often to check which jobs are due (INFRA_SYNC_CHECK_MS; 0: no timer)
- * @returns {Promise<object>} the HostedApp description
+ * @returns {Promise<object>} the HostedApp description, with shutdown()
  */
-export async function register(app, serverManager, {
+export async function mount(app, eventEmitter, serviceRegistry, {
   mountPath = '/infrastructure', dataDir, host,
   mockStepMs = envNumber('INFRA_MOCK_STEP_MS', 1200),
   jobCheckMs = envNumber('INFRA_SYNC_CHECK_MS', 60_000),
 } = {}) {
   // Check everything before mounting anything, so a failed start leaves nothing half-mounted (architecture.md §3.1).
   if (typeof app?.use !== 'function') throw new Error("nooblyjs-accelerator-infrastructure needs the launcher's Express app.");
-  if (!serverManager?.initialized) throw new Error('nooblyjs-accelerator-infrastructure needs an initialised serverManager (the launcher initialises it).');
+  if (typeof eventEmitter?.emit !== 'function') throw new Error("nooblyjs-accelerator-infrastructure needs the launcher's EventEmitter.");
+  if (!serviceRegistry?.initialized) throw new Error('nooblyjs-accelerator-infrastructure needs an initialised serviceRegistry (the launcher initialises it).');
   if (!MOUNT.test(mountPath ?? '')) throw new Error(`mountPath must look like /infrastructure, not ${JSON.stringify(mountPath)}`);
   if (!dataDir) throw new Error('nooblyjs-accelerator-infrastructure needs a dataDir.');
   const missing = NEEDS.filter((key) => !host?.[key]);
@@ -79,8 +86,8 @@ export async function register(app, serverManager, {
   const enabled = enabledProviders();
 
   // The launcher's logging and queueing providers, as instances named after this accelerator (never ones of our own).
-  const log = serverManager.logger(serverManager.getDefaultProviderType('logging'), { instanceName: NAME });
-  const queue = serverManager.queue(serverManager.getDefaultProviderType('queueing'), { instanceName: NAME });
+  const log = serviceRegistry.logger(serviceRegistry.getDefaultProviderType('logging'), { instanceName: NAME });
+  const queue = serviceRegistry.queue(serviceRegistry.getDefaultProviderType('queueing'), { instanceName: NAME });
   // Business time comes from the launcher's clock, which a dev clock can move.
   const now = () => new Date(host.clock?.now?.() ?? Date.now()).getTime();
 
@@ -89,8 +96,22 @@ export async function register(app, serverManager, {
   const secrets = await createSecrets({ store: host.store, log, audit: host.audit });
   const catalog = await createCatalog();
   const activity = createActivity({ repos, host, now });
-  // Every event from here on carries `system: 'infrastructure'` and its sentence, and is kept in the activity log.
-  host = { ...host, events: withWords(host.events, { record: activity.record, log }) };
+  // Every event from here on carries `system: 'infrastructure'` and its sentence, is kept in the activity log, and is
+  // also emitted on the launcher's EventEmitter (a listener that throws never breaks the operation that emitted it).
+  const launcherEvents = host.events;
+  const mirrored = {
+    ...launcherEvents,
+    async emit(type, payload, emitOptions) {
+      const event = await launcherEvents.emit(type, payload, emitOptions);
+      try {
+        eventEmitter.emit(type, payload);
+      } catch (err) {
+        log?.warn(`an ${type} listener failed: ${err.message}`);
+      }
+      return event;
+    },
+  };
+  host = { ...host, events: withWords(mirrored, { record: activity.record, log }) };
   const providers = createProviders({ enabled, store: host.store, secrets, catalog, mockStepMs, now });
   const operations = createOperations({ repos, host, log, queue, providers, secrets, now, perAccount: envNumber('INFRA_OPS_PER_ACCOUNT', 4) });
   const accounts = createAccounts({ repos, host, operations, providers, secrets, catalog, config, now, log });
@@ -143,6 +164,15 @@ export async function register(app, serverManager, {
   await operations.recover();
   jobs.start();
 
+  let closing = null;
+  const shutdown = () => {
+    closing ??= (async () => {
+      await jobs.close();
+      await operations.close();
+    })();
+    return closing;
+  };
+
   return {
     name: NAME,
     label: 'Cloud',
@@ -159,11 +189,10 @@ export async function register(app, serverManager, {
     seed: async ({ reset = false, content = host.sampleData !== false } = {}) => {
       await seed({ reset, content });
     },
-    /** Stops the jobs; running operations stop at their next safe point and carry on at the next start. */
-    close: async () => {
-      await jobs.close();
-      await operations.close();
-    },
+    /** Stops the jobs; running operations stop at their next safe point and carry on at the next start. Idempotent. */
+    shutdown,
+    /** The same as shutdown(), for launchers that close hosted apps by the HostedApp description. */
+    close: shutdown,
     /** Carries on with the operations under way on disk (after seeding, as at a start). */
     resume: () => operations.recover(),
     /** For the tests: resolves when no operation is queued or running. */

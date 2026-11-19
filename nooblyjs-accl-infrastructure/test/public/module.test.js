@@ -56,7 +56,7 @@ test('the kit is imported by absolute URL and the accelerator\'s own files relat
   }
 });
 
-test('register() describes the accelerator for the rail and the sidebar', async () => {
+test('mount() describes the accelerator for the rail and the sidebar', async () => {
   const t = await startApp();
   try {
     const { hosted } = t;

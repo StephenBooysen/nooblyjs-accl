@@ -5,9 +5,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { register } from '../index.js';
+import { EventEmitter } from 'node:events';
+import { mount } from '../index.js';
 import { createDevLauncher, CSRF_COOKIE, PERSON_COOKIE } from '../src/host/standalone.js';
-import { createTestServerManager, express } from './fixtures/host.js';
+import { createTestServiceRegistry, express } from './fixtures/host.js';
 import { PAGE_URLS } from './fixtures/pages.js';
 import { tempDir, listen, caller } from './helpers.js';
 
@@ -19,7 +20,7 @@ async function startLauncher() {
   const app = express();
   const launcher = createDevLauncher({ express, rootDir, log: quiet });
   launcher.mount(app);
-  const hosted = await register(app, createTestServerManager(), { mountPath: '/infrastructure', dataDir, host: launcher.hostFor(dataDir) });
+  const hosted = await mount(app, new EventEmitter(), createTestServiceRegistry(), { mountPath: '/infrastructure', dataDir, host: launcher.hostFor(dataDir) });
   launcher.add(hosted, '/infrastructure');
   const { server, base } = await listen(app);
   const call = caller(base);

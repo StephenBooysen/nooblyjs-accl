@@ -69,7 +69,7 @@ Three rules hold everywhere:
 | Browser | Native ES modules, tagged-template HTML (`/ui/js/html.js`), NooblyJS UI kit | No React, no bundler, no transpiler, no CDN scripts (the frame's CSP allows `'self'` only). |
 | Styling | The kit's `tokens.css` + `components.css`, plus `public/css/infrastructure.css` scoped to `[data-module="infrastructure"]` | The mockup palette *is* the kit's palette (§11.4). |
 | Records | `host.store` (nooblyjs-core `FsStore`: Markdown with YAML front matter, YAML, atomic writes, per-path locks) | Under `<dataDir>/infrastructure/`. |
-| Queue, logging, caching, scheduling | nooblyjs-core services via `serverManager`, instances named `infrastructure` | Never our own copies. |
+| Queue, logging, caching, scheduling | nooblyjs-core services via `serviceRegistry`, instances named `infrastructure` | Never our own copies. |
 | Secrets | AES-256-GCM files under `<dataDir>/secrets/`, behind `src/services/secrets.js` | Swappable for GCP Secret Manager / AWS Secrets Manager (§10). Not the nooblyjs-core settings service: it mounts an HTTP API that reveals values. |
 | GCP | `@google-cloud/compute`, `@google-cloud/storage`, `@google-cloud/monitoring`, `googleapis` (Cloud SQL Admin) | Loaded lazily (`await import`) so mock-only installs and tests need none of them. |
 | AWS | AWS SDK v3: `client-ec2`, `client-rds`, `client-s3`, `s3-request-presigner`, `client-iam`, `client-cloudwatch`, `client-sts`, `client-ssm` | Same, lazily. |
@@ -83,25 +83,32 @@ Three rules hold everywhere:
 The seeded `index.js` is the loading contract and stays. The domain behind it (designs, environments, provisioning
 runs, drift, blueprints, policies) is replaced (roadmap phase 0).
 
-A **launcher** loads accelerator modules: it owns the Express app, the nooblyjs-core `serverManager`, sign-in, the
-frame (rail, sidebar, chat) and the data folder, and calls each accelerator's `register()`. The accelerators
+A **launcher** loads accelerator modules: it owns the Express app, the shared `EventEmitter`, the nooblyjs-core `serviceRegistry`,
+sign-in, the frame (rail, sidebar, chat) and the data folder, and calls each accelerator's `mount()`. The accelerators
 monorepo's `../app.js` is the launcher being built; the NooblyJS AI host (`../../nooblyjs-ai/nooblyjs-ai-host`) is
 an example of one, and the seeded code was written against it. This accelerator depends only on the contract in
 §3.1–3.2, never on a particular launcher.
 
-### 3.1 `register(app, serverManager, options)`
+### 3.1 `mount(app, eventEmitter, serviceRegistry, options)`
+
+Every NooblyJS accelerator exports the same entry point (decided 2026-11-19, closing O8):
+`mount(app, eventEmitter, serviceRegistry, options)`, as `nooblyjs-accel-customers` and `nooblyjs-accel-payments` do.
 
 ```js
-import { register } from 'nooblyjs-accelerator-infrastructure';
-const hosted = await register(app, serverManager, { mountPath: '/infrastructure', dataDir, host });
+import { mount } from 'nooblyjs-accelerator-infrastructure';
+const hosted = await mount(app, eventEmitter, serviceRegistry, { mountPath: '/infrastructure', dataDir, host });
 ```
 
-- **Checks everything before mounting anything**: an Express app, an *initialised* serverManager, a valid mount path,
+- **Checks everything before mounting anything**: an Express app, an `EventEmitter`, an *initialised* serviceRegistry, a valid mount path,
   a `dataDir`, and every `host` capability in `NEEDS`. A failed start mounts nothing.
 - **Never listens on a port.** The host (or `server.js`) does.
-- Builds, in order: logger and queue instances from `serverManager` → provider registry (§6) → repos over `host.store`
+- Builds, in order: logger and queue instances from `serviceRegistry` → provider registry (§6) → repos over `host.store`
   (§5) → services → operations engine → API router + static files + page fallback, all on one router mounted at
   `mountPath` → `operations.recover()` → scheduled jobs.
+- **Events go two ways**: every event goes to `host.events` (the launcher's activity and browser event stream) and is
+  emitted on `eventEmitter` under the same type (`infrastructure.vm.ready`, `infrastructure.app.deployed`, …), so
+  code in the launcher (NooblyJS Cloud's deploy history, for one) can listen. A listener that throws is logged and
+  never breaks the operation.
 - Returns the **HostedApp description** the host uses to draw the rail and sidebar:
 
 ```js
@@ -112,14 +119,15 @@ const hosted = await register(app, serverManager, { mountPath: '/infrastructure'
   status: async () => ({ ... }),   // the sidebar card: cloud accounts and their state
   services: { summary, listResources, ... },   // what other hosted apps may call
   seed: async ({ reset }) => {},   // writes the seed story (product.md §9)
-  close: async () => {},           // stops jobs, lets the running step finish, closes SSH pools
+  shutdown: async () => {},        // stops jobs, lets the running step finish, closes SSH pools; idempotent
+  close: shutdown,                 // the same function, for hosts that close HostedApps
   idle: () => Promise,             // tests: resolves when no operation is queued or running
 }
 ```
 
 ### 3.2 The `host` contract
 
-What the host hands to `register()` (exactly the seeded `NEEDS`, plus optional `clock` and `sampleData`):
+What the host hands to `mount()` (exactly the seeded `NEEDS`, plus optional `clock` and `sampleData`):
 
 | Capability | Used for |
 | --- | --- |
@@ -138,18 +146,17 @@ What the host hands to `register()` (exactly the seeded `NEEDS`, plus optional `
 
 | Mode | Who builds `host` | Entry |
 | --- | --- | --- |
-| **Loaded by a launcher** (the accelerators `../app.js`, or any other host such as the NooblyJS AI host) | The launcher, once, shared by every accelerator it loads | It imports the package (`await import()` from CommonJS) and calls `register(app, serverManager, { mountPath, dataDir, host })`. |
-| **Standalone** (`npm start`, port 11008) | `createDevLauncher()` in `src/host/standalone.js` | `server.js`: Express app → `serviceRegistry.initialize()` → `createDevLauncher({ express, rootDir })` (the stand-in host from `createStandaloneHost()`, nooblyjs-core `createShell()` for the frame and `/ui`, a `/login` page) → `launcher.mount(app)` → `register()` → `launcher.add()` → `listen()`. |
-| **Tests** | `test/fixtures/host.js` (`createStandaloneHost()` on Express 4 or 5) | `register()` on an ephemeral port; `test/launcher.test.js` also runs a CommonJS, Express 4 launcher shaped like `../app.js`. |
+| **Loaded by a launcher** (the accelerators `../app.js`, or any other host such as the NooblyJS AI host) | The launcher, once, shared by every accelerator it loads | It imports the package (`await import()` from CommonJS) and calls `mount(app, eventEmitter, serviceRegistry, { mountPath, dataDir, host })`. |
+| **Standalone** (`npm start`, port 11008) | `createDevLauncher()` in `src/host/standalone.js` | `server.js`: Express app → `serviceRegistry.initialize()` → `createDevLauncher({ express, rootDir })` (the stand-in host from `createStandaloneHost()`, nooblyjs-core `createShell()` for the frame and `/ui`, a `/login` page) → `launcher.mount(app)` → `mount()` → `launcher.add()` → `listen()`. |
+| **Tests** | `test/fixtures/host.js` (`createStandaloneHost()` on Express 4 or 5) | `mount()` on an ephemeral port; `test/launcher.test.js` also runs a CommonJS, Express 4 launcher shaped like `../app.js`. |
 
 `src/host/standalone.js` is exported as `nooblyjs-accelerator-infrastructure/host`. `createStandaloneHost({ express })`
 is the reference implementation of the host contract; `createDevLauncher({ express, rootDir })` adds the shell, the
 `/ui` kit and a dev `/login`, and refuses to run with `NODE_ENV=production`. `../app.js` uses `createDevLauncher()`
 until it builds a host of its own (sign-in, audit, events, the frame).
 
-Note for the launcher: the sibling `nooblyjs-accelerator-customers` exposes a different entry point
-(`mount(app, eventEmitter, serviceRegistry, options)`). The launcher needs one convention for all accelerators; this
-one uses `register()` as seeded (roadmap 0.6).
+Every accelerator a launcher loads has the same entry point, `mount(app, eventEmitter, serviceRegistry, options)`
+(this one, `nooblyjs-accel-customers`, `nooblyjs-accel-payments`); each returns an object with `shutdown()`.
 
 ### 3.4 Express 4 and 5
 
@@ -167,7 +174,7 @@ suite runs once per Express major (roadmap 0.5).
 ## 4. Repository layout
 
 ```
-index.js                       register(), NAV, the HostedApp description
+index.js                       mount(), NAV, the HostedApp description
 server.js                      standalone server (§3.3)
 src/
   host/standalone.js           createStandaloneHost() and createDevLauncher(), for server.js, the tests and ../app.js
@@ -338,7 +345,7 @@ emits `infrastructure.operation.progress`; completion emits the domain event (`v
 (which may be half done, so an undo must cope with that), newest first. A cancelled launch deletes what it made and
 the VM's record.
 
-**Recovery.** `register()` calls `operations.recover()`: every `running` operation is re-queued at its current step
+**Recovery.** `mount()` calls `operations.recover()`: every `running` operation is re-queued at its current step
 (idempotency makes that safe); a `queued` one is re-queued. **Cancel** sets an `AbortSignal`; the current step stops
 at its next safe point and the steps' `undo` (where defined, e.g. release the reserved IP) runs.
 
@@ -456,7 +463,7 @@ MySQL, built from compute and the remote runner:
 authenticated data (a ciphertext moved to another ref does not open). The key is derived (scrypt) from
 `INFRA_SECRET_KEY`, else the launcher's `SETTINGS_SECRET`/`SESSION_SECRET`; `secrets/key-check.yaml` makes a changed
 key fail at start rather than one secret at a time. In development with no key set, a random one is generated once
-into `secrets/dev-key.txt` (mode 0600) with a warning; in production `register()` refuses to start without one.
+into `secrets/dev-key.txt` (mode 0600) with a warning; in production `mount()` refuses to start without one.
 
 Not the nooblyjs-core settings service, which the first draft named: creating it mounts
 `/services/settings/api/values?reveal=true` on the launcher's app, which would serve these values over HTTP, and its
@@ -640,8 +647,8 @@ Deletes take `{ confirm: "<name>" }` in the body and refuse without it (the API,
 
 **Decided**
 
-- **D1 Keep the seeded loading contract** (`register()`, host capabilities, HostedApp description, FsStore records,
-  error shape, live redraw). Replace its domain.
+- **D1 Keep the seeded loading contract** (host capabilities, HostedApp description, FsStore records,
+  error shape, live redraw). Replace its domain. The entry point itself is now `mount()` (O8, 2026-11-19).
 - **D2 No React, no build.** Native ES modules and the NooblyJS UI kit; pure logic shared by browser and server lives
   in `public/js/shared/`.
 - **D3 Cloud SDKs, not Terraform/Pulumi.** The product exposes a small, fixed set of resources with per-step progress
@@ -670,5 +677,5 @@ Deletes take `{ confirm: "<name>" }` in the body and refuse without it (the API,
 | --- | --- | --- | --- | --- |
 | O4 | Control channel | SSH from the server (D5); agent on the VM polling over HTTPS | SSH for v1; revisit if inbound SSH from the server is unacceptable | — |
 | O7 | Real spend | GCP billing export to BigQuery + AWS Cost Explorer | Later; estimates in v1 | Phase 7 |
-| O8 | The launcher's entry-point convention across accelerators | `register(app, serverManager, { host, … })` (this one); `mount(app, eventEmitter, serviceRegistry, options)` (customers) | One convention, agreed with the `../app.js` owner; this accelerator keeps `register()` | Phase 0.6 |
+| O8 | The launcher's entry-point convention across accelerators | `register(app, serverManager, { host, … })` (this one); `mount(app, eventEmitter, serviceRegistry, options)` (customers) | **Decided 2026-11-19: `mount(app, eventEmitter, serviceRegistry, options)` for every accelerator.** Done in roadmap 0.6a | Phase 0.6 |
 | O9 | Trusted HTTPS without the person's own domain | Let's Encrypt certificates for IP addresses (short-lived; check Caddy support); a wildcard-IP DNS service such as `sslip.io`; stay self-signed | Stay self-signed in v1; revisit IP certificates | Phase 7 |

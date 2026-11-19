@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 import { createRepos } from '../src/repos/index.js';
 import { createOperations } from '../src/services/operations.js';
 import { CloudError } from '../src/providers/errors.js';
-import { createTestServerManager, createHost } from './fixtures/host.js';
+import { createTestServiceRegistry, createHost } from './fixtures/host.js';
 import { tempDir } from './helpers.js';
 
 const require = createRequire(import.meta.url);
@@ -42,7 +42,7 @@ async function engine({ dir, perAccount = 4, queue } = {}) {
   const log = Object.fromEntries(['info', 'warn', 'error'].map((level) => [level, (m) => lines.push({ level, m })]));
   const repos = createRepos(store, { log });
   const ops = createOperations({
-    repos, host, log, queue: queue ?? createTestServerManager().queue(), now: () => Date.now(), perAccount,
+    repos, host, log, queue: queue ?? createTestServiceRegistry().queue(), now: () => Date.now(), perAccount,
     providers: { forAccount: async () => null },
     secrets: { scrub: (t) => String(t).replaceAll('s3cret-value', '••••••') },
   });
@@ -240,7 +240,7 @@ test('cancel and retry need the draft permission; a refusal is audited', async (
 
 test('a stop leaves the operation running on disk; the next start carries on from its step, and does nothing twice', async () => {
   const dir = await tempDir();
-  const queue = createTestServerManager().queue();
+  const queue = createTestServiceRegistry().queue();
   const made = [];
   const define = (ops, held) => ops.define('test.resume', {
     label: () => 'Resume me',
@@ -259,7 +259,7 @@ test('a stop leaves the operation running on disk; the next start carries on fro
   assert.deepEqual([op.status, op.steps.map((s) => s.status)], ['running', ['done', 'running', 'pending']]);
   assert.match(op.body, /Stopped with the server during "Wait for it"/);
 
-  const second = await engine({ dir, queue: createTestServerManager().queue() });
+  const second = await engine({ dir, queue: createTestServiceRegistry().queue() });
   const open = gate();
   open.open();
   define(second.ops, open);

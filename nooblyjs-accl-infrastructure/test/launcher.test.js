@@ -1,5 +1,5 @@
 // A CommonJS launcher on Express 4 (the shape of the accelerators' ../app.js; roadmap 0.6) loads this ESM accelerator
-// by package name, with the real nooblyjs-core serverManager, and serves its pages and API.
+// by package name, with the real nooblyjs-core serviceRegistry, and serves its pages and API.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
@@ -11,7 +11,7 @@ import fs from 'node:fs/promises';
 const run = promisify(execFile);
 const LAUNCHER = fileURLToPath(new URL('./fixtures/launcher.cjs', import.meta.url));
 
-test('a CommonJS launcher on Express 4 loads the accelerator with register() and the dev launcher', async () => {
+test('a CommonJS launcher on Express 4 loads the accelerator with mount() and the dev launcher', async () => {
   // Its own working folder: whatever nooblyjs-core writes on start stays out of the repo.
   const cwd = await tempDir();
   try {

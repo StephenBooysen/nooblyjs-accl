@@ -1,5 +1,5 @@
 // The test host: the dev host from src/host/standalone.js on the Express the run asks for (EXPRESS_MAJOR=4 runs
-// on Express 4, as the accelerators launcher does; otherwise Express 5), and a stand-in serverManager.
+// on Express 4, as the accelerators launcher does; otherwise Express 5), and a stand-in serviceRegistry.
 import { EventEmitter } from 'node:events';
 import { createStandaloneHost } from '../../src/host/standalone.js';
 
@@ -23,10 +23,10 @@ function memoryQueue() {
 }
 
 /**
- * A stand-in for the initialised nooblyjs-core serverManager: the methods accelerators may call, with a record of
+ * A stand-in for the initialised nooblyjs-core serviceRegistry: the methods accelerators may call, with a record of
  * the calls. initialize() throws, because only the launcher initialises it.
  */
-export function createTestServerManager() {
+export function createTestServiceRegistry() {
   const calls = [];
   const lines = [];
   const logger = (name) => Object.fromEntries(['error', 'warn', 'info', 'log', 'debug'].map((level) => [
@@ -43,7 +43,7 @@ export function createTestServerManager() {
     calls,
     lines,
     initialize() {
-      throw new Error('Only the launcher initialises the serverManager.');
+      throw new Error('Only the launcher initialises the serviceRegistry.');
     },
     getDefaultProviderType: () => 'memory',
     getEventEmitter: () => new EventEmitter(),

@@ -7,7 +7,7 @@
 //
 // The story is the mockups' (product.md §9): Stevie's GCP and AWS accounts on the mock cloud, five VMs, six apps, three
 // databases and four buckets, the mock cloud's matching state (mock-cloud/), and the activity on the Overview. The
-// mock accounts' credentials are secrets, which can't be written as files: register() adds them after seeding.
+// mock accounts' credentials are secrets, which can't be written as files: mount()'s seed() adds them after seeding.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

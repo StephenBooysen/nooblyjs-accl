@@ -1,4 +1,4 @@
-// A development host: everything register() needs from a launcher (architecture.md §3.2), built from nooblyjs-core,
+// A development host: everything mount() needs from a launcher (architecture.md §3.2), built from nooblyjs-core,
 // with a dev sign-in. It is the reference implementation of the host contract. server.js uses it to run this
 // accelerator on its own, the tests use it (test/fixtures/host.js), and a launcher such as ../app.js may use it
 // until it builds a host of its own. Exported as `nooblyjs-accelerator-infrastructure/host`.
@@ -6,7 +6,7 @@
 //   const { createDevLauncher } = await import('nooblyjs-accelerator-infrastructure/host');
 //   const launcher = createDevLauncher({ express, rootDir: dataRoot, log });
 //   launcher.mount(app);                                    // CSRF, /login, the shell's API and the /ui kit
-//   const hosted = await register(app, serverManager, { mountPath, dataDir, host: launcher.hostFor(dataDir) });
+//   const hosted = await mount(app, eventEmitter, serviceRegistry, { mountPath, dataDir, host: launcher.hostFor(dataDir) });
 //   launcher.add(hosted, mountPath);                        // on the rail
 //
 // Sign-in is for development only: the person is named by the X-Dev-Person header (tests, curl) or the
@@ -159,7 +159,7 @@ export function createStandaloneHost({ express, rootDir, people = PEOPLE, servic
     permissionsFor,
     auth,
     csrf,
-    /** The `host` handed to one accelerator's register(), with its store rooted at the accelerator's dataDir. */
+    /** The `host` handed to one accelerator's mount(), with its store rooted at the accelerator's dataDir. */
     hostFor(appDir) {
       return {
         express,
@@ -236,7 +236,7 @@ export function createDevLauncher({ express, rootDir, log = console, people = PE
     shell,
     mount,
     hostFor: (dataDir) => stand.hostFor(dataDir),
-    /** Puts an accelerator whose register() succeeded on the rail. */
+    /** Puts an accelerator whose mount() succeeded on the rail. */
     add: (hosted, mountPath) => shell.add(hosted, { name: hosted.name, mountPath }),
   };
 }

@@ -25,11 +25,14 @@ Development only: the sign-in lets anyone be anyone, so `npm start` refuses to r
 ## Load it from a launcher
 
 The accelerator is an ES module. A launcher (such as `../app.js`, which is CommonJS on Express 4) loads it and calls
-`register()`:
+`mount()`, the entry point every NooblyJS accelerator shares:
 
 ```js
-const { register } = await import('nooblyjs-accelerator-infrastructure');
-const hosted = await register(app, serviceRegistry, { mountPath: '/infrastructure', dataDir, host });
+const { mount } = await import('nooblyjs-accelerator-infrastructure');
+const hosted = await mount(app, eventEmitter, serviceRegistry, { mountPath: '/infrastructure', dataDir, host });
+hosted.status();                 // the sidebar card
+eventEmitter.on('infrastructure.vm.ready', (event) => { /* … */ });
+await hosted.shutdown();
 ```
 
 `host` is what the launcher shares: sign-in, permissions, audit, events, a file store, the frame page. Until a

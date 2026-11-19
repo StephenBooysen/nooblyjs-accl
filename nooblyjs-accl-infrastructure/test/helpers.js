@@ -4,8 +4,9 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { register } from '../index.js';
-import { createHost, createTestServerManager, express, PERSON_HEADER } from './fixtures/host.js';
+import { EventEmitter } from 'node:events';
+import { mount } from '../index.js';
+import { createHost, createTestServiceRegistry, express, PERSON_HEADER } from './fixtures/host.js';
 
 export const FALLBACK = 'host fallback';
 
@@ -46,13 +47,14 @@ export function caller(base) {
 /**
  * @param {object} [o]
  * @param {string} [o.mountPath]
- * @param {(host: object) => object} [o.changeHost]   alter the host before register() (to test refusals)
- * @param {object} [o.serverManager]
+ * @param {(host: object) => object} [o.changeHost]   alter the host before mount() (to test refusals)
+ * @param {object} [o.serviceRegistry]
+ * @param {object} [o.eventEmitter]   the launcher's shared emitter (a new one by default)
  * @param {boolean} [o.seed]   write the seed story first
- * @param {(dataDir: string) => Promise<void>} [o.before]   writes files before register() runs (restart tests)
+ * @param {(dataDir: string) => Promise<void>} [o.before]   writes files before mount() runs (restart tests)
  * @param {number} [o.mockStepMs]   the mock cloud's pace (0: cloud work finishes at once)
  */
-export async function startApp({ mountPath = '/infrastructure', changeHost = (h) => h, serverManager = createTestServerManager(), seed = false, before, mockStepMs = 0 } = {}) {
+export async function startApp({ mountPath = '/infrastructure', changeHost = (h) => h, serviceRegistry = createTestServiceRegistry(), eventEmitter = new EventEmitter(), seed = false, before, mockStepMs = 0 } = {}) {
   const rootDir = await tempDir();
   const dataDir = path.join(rootDir, mountPath.replace(/^\//, '') || 'root');
   await fs.mkdir(dataDir, { recursive: true });
@@ -61,11 +63,11 @@ export async function startApp({ mountPath = '/infrastructure', changeHost = (h)
   const app = express();
 
   let hosted = null;
-  let registerError = null;
+  let mountError = null;
   try {
-    hosted = await register(app, serverManager, { mountPath, dataDir, host: changeHost(stand.hostFor(dataDir)), mockStepMs, jobCheckMs: 0 });
+    hosted = await mount(app, eventEmitter, serviceRegistry, { mountPath, dataDir, host: changeHost(stand.hostFor(dataDir)), mockStepMs, jobCheckMs: 0 });
   } catch (err) {
-    registerError = err;
+    mountError = err;
   }
   if (seed && hosted) await hosted.seed({ reset: true });
   app.use((req, res) => res.status(404).type('text').send(FALLBACK));
@@ -79,8 +81,9 @@ export async function startApp({ mountPath = '/infrastructure', changeHost = (h)
     rootDir,
     dataDir,
     hosted,
-    registerError,
-    serverManager,
+    mountError,
+    serviceRegistry,
+    eventEmitter,
     auditLog: stand.auditLog,
     eventLog: stand.eventLog,
     get: (url, o) => call('GET', url, o),

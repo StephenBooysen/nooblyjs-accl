@@ -72,6 +72,11 @@ Windows VMs, Kubernetes, serverless functions, load balancers across several VMs
 replicas, importing ("adopting") resources that were not created here, real invoiced spend (v1 shows estimates),
 bucket custom domains over HTTPS, MongoDB replica sets (see §8 and the roadmap for when these come).
 
+**Platform hosting (roadmap phase 8).** For a launcher that hosts many tenants (NooblyJS Cloud), phase 8 adds shared
+host pools, load balancing across VMs, builds, managed Postgres and Key Value, telemetry and static sites behind an
+in-process API. It is off by default and does not change the screens above (specs in
+`nooblyjs-accl-infrastructure/.claude/specs/`).
+
 **Not planned:** reaching a database from another cloud, or from the internet. A database is used by VMs in its own
 cloud account; to connect from a laptop, open an SSH tunnel through one of those VMs (the Connect tab shows the
 command).

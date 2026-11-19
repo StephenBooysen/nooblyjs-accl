@@ -11,12 +11,14 @@ API (`/infrastructure/api/v1`) are mounted by a launcher at `/infrastructure`.
 - `../.claude/steering/infrastructure-product.md`: what it does, for whom, every screen, who may do what.
 - `../.claude/steering/infrastructure-architecture.md`: how it is built (the launcher contract, providers, operations, records, UI).
 - `../.claude/steering/infrastructure-roadmap.md`: the build order. **Tick its checkboxes in the same change as the work.**
+- `.claude/specs/`: phase 8 (platform hosting for NooblyJS Cloud), one spec per step; its boxes are also in the roadmap.
 - `../.claude/steering/ui/`: the mockups the screens are built from (reference only; never copy their React runtime).
 
 ## Rules
 
-- **Loaded by a launcher.** `index.js` exports `register(app, serverManager, { mountPath, dataDir, host })`. It checks
-  everything before mounting anything, never listens on a port, never initialises the serverManager, and uses only
+- **Loaded by a launcher.** `index.js` exports `mount(app, eventEmitter, serviceRegistry, { mountPath, dataDir, host })`,
+  the entry point every NooblyJS accelerator shares. It checks everything before mounting anything, never listens on a
+  port, never initialises the serviceRegistry, emits every event on `host.events` and `eventEmitter`, and uses only
   what `host` provides (architecture.md §3). `../app.js` is the launcher; `server.js` runs this repo on its own.
 - **Express 4 and 5.** Launchers may run either. No wildcard routes (`'/{*rest}'` is Express 5 only, `'*'` Express 4
   only); wrap every async route in `handler()` from `src/util/http.js` (Express 4 ignores rejected promises).
@@ -41,4 +43,4 @@ npm run seed           # writes the seed story into data/infrastructure/ (-- --r
 ```
 
 This repo lives in the `nooblyjs-accl` monorepo; `nooblyjs-core` is a separate repo next to it
-(`file:../../nooblyjs-core`), which provides the serverManager, the FsStore, the shell and the `/ui` kit.
+(`file:../../nooblyjs-core`), which provides the serviceRegistry, the FsStore, the shell and the `/ui` kit.

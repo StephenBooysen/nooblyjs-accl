@@ -50,8 +50,8 @@ const worker = serviceRegistry.working('memory');
 const workflow = serviceRegistry.workflow('memory');
 
 /**
- * Loads the accelerators. Each one is an ES module that exports register(app, serviceRegistry, { mountPath,
- * dataDir, host }) and mounts its screens and API under mountPath (.claude/steering/infrastructure-architecture.md §3).
+ * Loads the accelerators. Each one is an ES module that exports mount(app, eventEmitter, serviceRegistry, {
+ * mountPath, dataDir, host }) and mounts its screens and API under mountPath (.claude/steering/infrastructure-architecture.md §3).
  * Until this launcher has a host of its own (sign-in, audit, events, the frame), it uses the infrastructure
  * accelerator's development host, which signs anyone in as anyone at /login and refuses to
  * run with NODE_ENV=production.
@@ -68,7 +68,7 @@ async function loadAccelerators() {
   const infrastructure = await load('nooblyjs-accelerator-infrastructure/index.js');
   const mountPath = '/infrastructure';
   const dataDir = path.join(dataRoot, 'infrastructure');
-  const hosted = await infrastructure.register(app, serviceRegistry, { mountPath, dataDir, host: launcher.hostFor(dataDir) });
+  const hosted = await infrastructure.mount(app, eventEmitter, serviceRegistry, { mountPath, dataDir, host: launcher.hostFor(dataDir) });
   launcher.add(hosted, mountPath);
   log.info(`mounted ${hosted.name} at ${mountPath}`);
 }
