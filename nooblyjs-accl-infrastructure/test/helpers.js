@@ -54,8 +54,9 @@ export function caller(base) {
  * @param {(dataDir: string) => Promise<void>} [o.before]   writes files before mount() runs (restart tests)
  * @param {number} [o.mockStepMs]   the mock cloud's pace (0: cloud work finishes at once)
  * @param {object} [o.platform]   mount()'s platform option ({ enabled: true } for the platform layer, spec 8.1)
+ * @param {object} [o.agents]     mount()'s agents option (spec 8.9: verify and timings)
  */
-export async function startApp({ mountPath = '/infrastructure', changeHost = (h) => h, serviceRegistry = createTestServiceRegistry(), eventEmitter = new EventEmitter(), seed = false, before, mockStepMs = 0, platform } = {}) {
+export async function startApp({ mountPath = '/infrastructure', changeHost = (h) => h, serviceRegistry = createTestServiceRegistry(), eventEmitter = new EventEmitter(), seed = false, before, mockStepMs = 0, platform, agents, local } = {}) {
   const rootDir = await tempDir();
   const dataDir = path.join(rootDir, mountPath.replace(/^\//, '') || 'root');
   await fs.mkdir(dataDir, { recursive: true });
@@ -66,7 +67,7 @@ export async function startApp({ mountPath = '/infrastructure', changeHost = (h)
   let hosted = null;
   let mountError = null;
   try {
-    hosted = await mount(app, eventEmitter, serviceRegistry, { mountPath, dataDir, host: changeHost(stand.hostFor(dataDir)), mockStepMs, jobCheckMs: 0, ...(platform ? { platform } : {}) });
+    hosted = await mount(app, eventEmitter, serviceRegistry, { mountPath, dataDir, host: changeHost(stand.hostFor(dataDir)), mockStepMs, jobCheckMs: 0, ...(platform ? { platform } : {}), ...(agents ? { agents } : {}), ...(local ? { local } : {}) });
   } catch (err) {
     mountError = err;
   }
@@ -74,11 +75,13 @@ export async function startApp({ mountPath = '/infrastructure', changeHost = (h)
   app.use((req, res) => res.status(404).type('text').send(FALLBACK));
 
   const { server, base } = await listen(app);
+  stand.attachUpgrades(server);
   const call = caller(base);
 
   return {
     app,
     base,
+    server,
     rootDir,
     dataDir,
     hosted,
@@ -90,6 +93,7 @@ export async function startApp({ mountPath = '/infrastructure', changeHost = (h)
     get: (url, o) => call('GET', url, o),
     post: (url, o) => call('POST', url, o),
     put: (url, o) => call('PUT', url, o),
+    delete: (url, o) => call('DELETE', url, o),
     async close() {
       await hosted?.close();
       await new Promise((resolve) => server.close(resolve));

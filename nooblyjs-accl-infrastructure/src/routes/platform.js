@@ -2,8 +2,9 @@
 // support tooling. Operators only (`change-guardrails`); a launcher's tenants never call it: they reach their own
 // workloads through the launcher, which calls services.platform in process. Mounted only when the platform is on.
 import { handler } from '../util/http.js';
+import { localRoutes } from './local.js';
 
-export function platformRoutes({ host, platform }) {
+export function platformRoutes({ host, platform, local = null, mountPath = '/infrastructure' }) {
   const r = host.express.Router();
   const p = platform.services;
   r.use(host.requireRole('change-guardrails'));
@@ -19,5 +20,7 @@ export function platformRoutes({ host, platform }) {
   }));
   r.get('/tenants/:tenant/workloads/:name/deploys/:id', handler(async (req, res) => res.json(await p.deploys.get(req.params.tenant, req.params.name, req.params.id))));
   r.get('/tenants/:tenant/usage', handler(async (req, res) => res.json(await p.usage(req.params.tenant, { from: req.query.from, to: req.query.to }))));
+  // Sites and servers (spec 8.9), when the launcher passes WebSocket upgrades through.
+  if (local) r.use('/local', localRoutes({ host, platform, local, mountPath }));
   return r;
 }

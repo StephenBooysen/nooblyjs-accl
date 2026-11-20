@@ -141,6 +141,7 @@ What the host hands to `mount()` (exactly the seeded `NEEDS`, plus optional `clo
 | `service(name)` | Other hosted apps' services (optional partners). |
 | `frame` | Handler that answers any page URL with the host's frame HTML. |
 | `clock` (optional) | Business time (`now()`), so tests and the dev clock can move time. |
+| `onUpgrade(path, handler)` (optional) | WebSocket upgrades for local servers' agents at `<mountPath>/agent/v1` (spec 8.9); returns an unregister function. The launcher keeps a `createUpgradeRouter()` (exported from `/host`) and calls `attach(server)` once listening. Without it the accelerator mounts with no local servers. |
 
 ### 3.3 Three ways to run
 
@@ -675,7 +676,7 @@ Deletes take `{ confirm: "<name>" }` in the body and refuse without it (the API,
 
 | # | Question | Options | Recommendation | Blocks |
 | --- | --- | --- | --- | --- |
-| O4 | Control channel | SSH from the server (D5); agent on the VM polling over HTTPS | SSH for v1; revisit if inbound SSH from the server is unacceptable | — |
+| O4 | Control channel | SSH from the server (D5); agent on the VM polling over HTTPS | **Decided 2026-11-20 for local servers: an agent (Node 22) connecting out over a WebSocket** (spec 8.9). Cloud VMs keep SSH (D5) for now. | — |
 | O7 | Real spend | GCP billing export to BigQuery + AWS Cost Explorer | Later; estimates in v1 | Phase 7 |
 | O8 | The launcher's entry-point convention across accelerators | `register(app, serverManager, { host, … })` (this one); `mount(app, eventEmitter, serviceRegistry, options)` (customers) | **Decided 2026-11-19: `mount(app, eventEmitter, serviceRegistry, options)` for every accelerator.** Done in roadmap 0.6a | Phase 0.6 |
 | O9 | Trusted HTTPS without the person's own domain | Let's Encrypt certificates for IP addresses (short-lived; check Caddy support); a wildcard-IP DNS service such as `sslip.io`; stay self-signed | Stay self-signed in v1; revisit IP certificates | Phase 7 |

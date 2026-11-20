@@ -1,0 +1,11 @@
+{
+  "name": "noobly-agent",
+  "version": "0.1.0",
+  "description": "The Noobly Cloud agent for local servers (spec 8.9): connects out to the controller and drives Docker on this server.",
+  "license": "UNLICENSED",
+  "private": true,
+  "type": "module",
+  "bin": { "noobly-agent": "./bin/noobly-agent.js" },
+  "engines": { "node": ">=22.12" },
+  "dependencies": {}
+}

@@ -19,6 +19,18 @@ export const REDEPLOY = ['source', 'build', 'run'];
 export const RESCALE = ['plan', 'instances'];
 
 export const LIMITS = { instances: 20, cpu: 16, memoryMb: 65536, env: 200, domains: 20 };
+/** A public Git repository's https:// URL: a host and a path, no credentials, query or fragment. */
+export function isPublicGitUrl(v) {
+  // URL() resolves '..' and percent-escapes away, so look at the text as written first.
+  if (typeof v !== 'string' || v.length > 500 || !v.startsWith('https://') || v.includes('%') || v.slice(8).split('/').includes('..')) return false;
+  try {
+    const u = new URL(v);
+    return Boolean(u.hostname) && !u.username && !u.password && !u.search && !u.hash && /^\/[A-Za-z0-9._~/-]+$/.test(u.pathname) && u.pathname.length > 1 && !u.pathname.split('/').includes('..');
+  } catch {
+    return false;
+  }
+}
+
 export const DEFAULT_PLAN = { cpu: 0.5, memoryMb: 512 };
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -55,7 +67,7 @@ export function checkSpec(input, { regions }) {
     if (!text(src.image, 255) || !IMAGE.test(src.image)) bad('source.image', 'An image reference, such as ghcr.io/acme/api:1.4.');
     source = { image: src.image };
   } else {
-    if (!text(src.repo, 201) || !REPO.test(src.repo)) bad('source.repo', 'owner/name of a repository.');
+    if (!text(src.repo, 500) || !(REPO.test(src.repo) || isPublicGitUrl(src.repo))) bad('source.repo', 'owner/name of a GitHub repository, or a public https:// Git URL.');
     const branch = src.branch ?? 'main';
     if (!text(branch, 200) || !BRANCH.test(branch)) bad('source.branch', 'A branch name.');
     const rootDir = src.rootDir ?? '';
@@ -72,7 +84,7 @@ export function checkSpec(input, { regions }) {
   else if (source?.repo) {
     const runtime = b.runtime ?? 'node22';
     if (!RUNTIMES.includes(runtime)) bad('build.runtime', `One of ${RUNTIMES.join(', ')}.`);
-    for (const key of ['buildCommand', 'startCommand', 'dockerfile']) if (b[key] !== undefined && b[key] !== null && !text(b[key], 500)) bad(`build.${key}`, 'Up to 500 characters.');
+    for (const key of ['buildCommand', 'startCommand', 'dockerfile']) if (b[key] !== undefined && b[key] !== null && (!text(b[key], 500) || /[\r\n]/.test(b[key]))) bad(`build.${key}`, 'One line of up to 500 characters.');
     build = { runtime, buildCommand: b.buildCommand ?? null, startCommand: b.startCommand ?? null, dockerfile: runtime === 'dockerfile' ? (b.dockerfile ?? 'Dockerfile') : null };
   }
 

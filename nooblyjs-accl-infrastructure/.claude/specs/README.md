@@ -32,6 +32,7 @@ Git) come before phase 8, because phase 8 builds on their steps.
 | [8.6 Managed Postgres](08.6-managed-postgres.md) | Postgres 16 on Cloud SQL / RDS, PITR, read replica, HA | 5 | 8.6 |
 | [8.7 Managed Key Value](08.7-managed-key-value.md) | Redis-compatible store on Memorystore / ElastiCache | 5 | 8.7 |
 | [8.8 Static sites and CDN](08.8-static-sites-cdn.md) | Publish a build output to a bucket served through Cloud CDN / CloudFront | 4, 8.3 | 8.8 |
+| [8.9 Local servers](08.9-local-servers.md) | Your own Ubuntu servers: sites, enrolment, an outbound Node agent driving Docker, LAN exposure, live logs | 8.1 | 8.9 |
 
 **How each spec is written.** *Requirements* (numbered, testable), *Design* (records, provider contract, operations
 and steps, API, events, mock behaviour), *Tasks* (the checklist; the same boxes are in `infrastructure-roadmap.md`

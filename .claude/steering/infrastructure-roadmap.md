@@ -166,7 +166,7 @@ Ordered by expected value; each needs its open decision settled first (architect
 - [ ] 7.5 Catalogue refresh script from the Cloud Billing Catalog and AWS Price List APIs.
 - [ ] 7.6 Adopt existing cloud resources into Noobly Cloud.
 - [ ] 7.7 Resize VMs; snapshots; scheduled stop/start for non-production VMs.
-- [ ] 7.8 On-VM agent as an alternative to inbound SSH (O4). Also replaces the SSH telemetry collector of 8.5.
+- [ ] 7.8 ~~On-VM agent as an alternative to inbound SSH (O4).~~ Decided 2026-11-20: the agent is built for local servers in 8.9; cloud VMs may adopt it later in place of the SSH collector of 8.5.
 
 ## Phase 8 — Platform hosting (for NooblyJS Cloud)
 
@@ -246,6 +246,21 @@ tick both).
 - [ ] 8.8.3 Cloud CDN and CloudFront adapters.
 - [ ] 8.8.4 Custom domains, `_redirects`/`_headers`, SPA fallback.
 - [ ] 8.8.5 Bandwidth, requests and cache hit rate per site.
+
+### 8.9 Local servers — [spec](../../nooblyjs-accl-infrastructure/.claude/specs/08.9-local-servers.md)
+
+Needs only 8.1, so it can come before 8.2–8.5: it is the first real runtime (LAN, on enrolled Ubuntu servers).
+
+- [x] 8.9.1 Protocol module (frames, command schemas, size limits) with unit tests; the in-process mock agent.
+- [x] 8.9.2 `host.onUpgrade` in the host contract; the agent endpoint, hello and heartbeat, offline detection.
+- [x] 8.9.3 Sites, servers and enrolment records; tokens and credentials; API and the operator's *Sites and servers* section.
+- [ ] 8.9.4 The `local` provider and server facts, allocatable and warnings.
+- [x] 8.9.5 The agent: Docker over the socket, `network.ensure`, `container.run/stop/remove/list` with the hardening flags, labels.
+- [x] 8.9.6 Builds on the agent: clone (`https://`, `file://` in dev), runtime templates, streamed and masked build log.
+- [ ] 8.9.7 `runtime-local.js`: placement over online servers, rollout, health check, jobs, "Site … is full", re-placement after 5 minutes offline.
+- [x] 8.9.8 Environment through `resolveSecrets` and env files; never on a command line or in a log.
+- [ ] 8.9.9 Logs and stats streaming into `telemetry.subscribe()` with cursors and resume.
+- [x] 8.9.10 `install.sh` (systemd, or foreground without it) and `noobly-agent` CLI; the opt-in real-Docker test.
 
 **Exit check:** NooblyJS Cloud's seed story runs for real in one region: two tenants' web services (2 instances each)
 deploy from GitHub through a builder and the registry, serve on `*.<platformDomain>` through a rolling deploy with

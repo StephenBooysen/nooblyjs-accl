@@ -28,6 +28,11 @@ import { createSummary } from './src/services/summary.js';
 import { withWords } from './src/services/event-words.js';
 import { seed as seedStory } from './src/seed/index.js';
 import { createPlatform } from './src/platform/index.js';
+import { spawn } from 'node:child_process';
+import { createAgentHub } from './src/services/agents.js';
+import { createLocalServers } from './src/platform/local.js';
+import { startMockAgent } from './agent/mock.js';
+import { agentFileRoutes, AGENT_PUBLIC } from './src/routes/agent-files.js';
 
 const NAME = 'infrastructure';
 const MOUNT = /^\/[a-z0-9][a-z0-9-]{0,62}$/;
@@ -72,7 +77,13 @@ const envNumber = (name, fallback) => (process.env[name] === undefined || proces
  * @param {object} options.host
  * @param {number} [options.mockStepMs]   how long one unit of mock cloud work takes (INFRA_MOCK_STEP_MS; tests pass 0)
  * @param {number} [options.jobCheckMs]   how often to check which jobs are due (INFRA_SYNC_CHECK_MS; 0: no timer)
- * @param {{ enabled?: boolean }} [options.platform]   the platform layer for a hosting launcher (spec 8.1); off unless enabled
+ * @param {{ enabled?: boolean, resolveSecrets?: Function }} [options.platform]   the platform layer for a hosting launcher (spec 8.1);
+ *   off unless enabled. resolveSecrets(tenantId, refs) opens the launcher's secretRefs when a container starts (8.9 R9).
+ * @param {{ site?: { id: string, name?: string, bind?: string }, agent?: 'fork'|'mock'|null, controller?: string }} [options.local]
+ *   local servers (spec 8.9): a site to create on start, and in development an agent on this machine — 'fork' runs the
+ *   real agent as a child process (Docker on this machine), 'mock' an in-process one (tests). Needs host.onUpgrade.
+ * @param {{ verify?: Function, checkMs?: number, offlineAfterMs?: number, heartbeatMs?: number }} [options.agents]
+ *   local servers' agent channel (spec 8.9); on when the host offers onUpgrade. Tests override verify and the timings.
  * @returns {Promise<object>} the HostedApp description, with shutdown()
  */
 export async function mount(app, eventEmitter, serviceRegistry, {
@@ -80,6 +91,8 @@ export async function mount(app, eventEmitter, serviceRegistry, {
   mockStepMs = envNumber('INFRA_MOCK_STEP_MS', 1200),
   jobCheckMs = envNumber('INFRA_SYNC_CHECK_MS', 60_000),
   platform: platformOption = {},
+  agents: agentOptions = {},
+  local: localOption = {},
 } = {}) {
   // Check everything before mounting anything, so a failed start leaves nothing half-mounted (architecture.md §3.1).
   if (typeof app?.use !== 'function') throw new Error("nooblyjs-accelerator-infrastructure needs the launcher's Express app.");
@@ -130,8 +143,38 @@ export async function mount(app, eventEmitter, serviceRegistry, {
   const vms = createVms({ repos, host, operations, providers, remote, sshKeys, catalog, config, cost, now, log });
   const summary = createSummary({ repos, accounts, activity, cost });
   // The platform layer (spec 8.1): its operation types, records, routes and job exist only when the launcher asks.
-  const platform = platformOn
-    ? createPlatform({ store: host.store, host, operations, config, catalog, log, now, mockStepMs, workloadsPerTenant: envNumber('INFRA_WORKLOADS_PER_TENANT', 100) })
+  // Local servers (spec 8.9): their records and the agent hub, when the launcher can pass WebSocket upgrades and runs
+  // the platform layer. The hub's callbacks reach the platform's local runtime, made just below.
+  const localServers = platformOn && typeof host.onUpgrade === 'function' ? createLocalServers({ store: host.store, config, now, log }) : null;
+  let platform = null;
+  let stopping = false;
+  const agents = typeof host.onUpgrade === 'function' ? createAgentHub({
+    verify: agentOptions.verify ?? (localServers ? (frame) => localServers.verify(frame) : async () => { throw new Error('This server is not enrolled.'); }),
+    now,
+    log: { warn: (m) => log.warn(m), info: (m) => log.info(m) },
+    onStatus: (server, status) => {
+      log.info(`agent ${server} ${status}`);
+      if (!localServers || stopping) return;
+      localServers.markStatus(server, status === 'online' ? 'online' : 'offline')
+        .then((s) => { if (s && status === 'online') return platform?.localRuntime?.serverOnline(server); })
+        .catch((err) => log.warn(`server ${server}: ${err.message}`));
+      try {
+        eventEmitter.emit('infrastructure.server.status', { server, status });
+      } catch { /* a listener failed */ }
+    },
+    onFacts: (server, facts) => { localServers?.recordFacts(server, facts).catch((err) => log.warn(`server ${server} facts: ${err.message}`)); },
+    onStream: (server, frame) => platform?.localRuntime?.onStream(server, frame),
+    ...(agentOptions.checkMs !== undefined ? { checkMs: agentOptions.checkMs } : {}),
+    ...(agentOptions.offlineAfterMs !== undefined ? { offlineAfterMs: agentOptions.offlineAfterMs } : {}),
+    ...(agentOptions.heartbeatMs !== undefined ? { heartbeatMs: agentOptions.heartbeatMs } : {}),
+  }) : null;
+  platform = platformOn
+    ? createPlatform({
+      store: host.store, host, operations, config, catalog, log, now, mockStepMs, workloadsPerTenant: envNumber('INFRA_WORKLOADS_PER_TENANT', 100),
+      local: localServers ? { servers: localServers, hub: agents } : null,
+      resolveSecrets: platformOption.resolveSecrets,
+      emitRaw: (type, payload) => eventEmitter.emit(type, payload),
+    })
     : null;
   const jobs = createJobs({
     now,
@@ -162,8 +205,11 @@ export async function mount(app, eventEmitter, serviceRegistry, {
   };
 
   const router = host.express.Router();
+  // install.sh and the agent's files, without a sign-in (spec 8.9 R2): only when local servers are on.
+  if (localServers) router.use(agentFileRoutes({ host, mountPath }));
   router.use('/api/v1', createApi({
     host, log, seed, summary, accounts, operations, activity, catalog, cost, vms, sshKeys, platform,
+    local: localServers && agents ? { servers: localServers, hub: agents } : null, mountPath,
     about: { name: NAME, version: VERSION, mountPath, providers: enabled },
   }));
   // The browser files (module, pages, CSS). redirect: false, or /infrastructure would 301 to /infrastructure/.
@@ -174,6 +220,21 @@ export async function mount(app, eventEmitter, serviceRegistry, {
   router.use((req, res, next) => (req.method === 'GET' && !path.extname(req.path) && !req.path.startsWith('/api/') ? host.frame(req, res, next) : next()));
   app.use(mountPath, router);
 
+  // Local servers' agents connect out to <mountPath>/agent/v1 (spec 8.9 R3). The accelerator never listens on a port:
+  // the launcher passes its HTTP server's upgrades through host.onUpgrade. Without it, there are no local servers.
+  let stopUpgrades = null;
+  let localAgent = null;
+  if (agents) {
+    stopUpgrades = host.onUpgrade(`${mountPath}/agent/v1`, agents.upgradeHandler());
+  } else {
+    log.info('the launcher has no host.onUpgrade, so local servers cannot connect (spec 8.9)');
+  }
+  if (localServers) {
+    if (localOption.site) await localServers.ensureSite(localOption.site);
+    for (const site of await localServers.sites()) platform.addLocalSite(site.id);
+    if (localOption.agent && localOption.site) localAgent = await startLocalAgent({ kind: localOption.agent, site: localOption.site.id, controller: localOption.controller, dataDir, localServers, agents, log });
+  }
+
   // Operations that were queued or under way when the server last stopped carry on; the jobs start ticking.
   await operations.recover();
   jobs.start();
@@ -181,6 +242,10 @@ export async function mount(app, eventEmitter, serviceRegistry, {
   let closing = null;
   const shutdown = () => {
     closing ??= (async () => {
+      stopping = true;
+      localAgent?.stop();
+      if (typeof stopUpgrades === 'function') stopUpgrades();
+      await agents?.close();
       await jobs.close();
       await operations.close();
     })();
@@ -193,6 +258,8 @@ export async function mount(app, eventEmitter, serviceRegistry, {
     title: 'Noobly Cloud',
     icon: 'globe',
     mountPath,
+    /** Paths under mountPath that answer without a sign-in (the agent's downloads); a gating launcher lets these through. */
+    publicPaths: localServers ? [...AGENT_PUBLIC] : [],
     ui: { entry: 'js/module.js', styles: ['css/infrastructure.css'] },
     nav: platform ? [...NAV, PLATFORM_NAV] : NAV,
     /** The sidebar's status card: the cloud accounts and their state (product.md §5). */
@@ -209,6 +276,10 @@ export async function mount(app, eventEmitter, serviceRegistry, {
     close: shutdown,
     /** Carries on with the operations under way on disk (after seeding, as at a start). */
     resume: () => operations.recover(),
+    /** The local servers' agent channel (spec 8.9), or null when the launcher cannot pass upgrades. */
+    agents,
+    /** Local servers (spec 8.9): their records and the development agent, when on. */
+    local: localServers ? { servers: localServers, get agent() { return localAgent; } } : null,
     /** For the tests: resolves when no operation is queued or running. */
     idle: () => operations.idle(),
     /** For the tests and a person in a hurry: run a job now ('account-check', 'inventory'). */
@@ -221,4 +292,38 @@ export async function mount(app, eventEmitter, serviceRegistry, {
       return account ? providers.mockCloud(account) : null;
     },
   };
+}
+
+/**
+ * A development agent on this machine (spec 8.9 exit check): 'mock' runs one in-process on the in-memory Docker;
+ * 'fork' runs the real agent (agent/bin/noobly-agent.js) as a child process with --dev, its state in
+ * <dataDir>/local-agent. Either enrols with a fresh one-time token the first time; the real one keeps its credential.
+ */
+async function startLocalAgent({ kind, site, controller, dataDir, localServers, agents, log }) {
+  if (kind === 'mock') {
+    const { token } = await localServers.createEnrolment(site, { by: 'development' });
+    const agent = startMockAgent({ identity: { token } });
+    agents.attach(agent.transport, { address: '127.0.0.1' });
+    return { kind, docker: agent.docker, welcome: agent.welcome, stop: () => agent.session.stop() };
+  }
+  if (kind !== 'fork') throw new Error(`local.agent is 'fork', 'mock' or nothing, not ${JSON.stringify(kind)}.`);
+  if (!controller) throw new Error('local.controller (this launcher\'s own URL, such as http://127.0.0.1:11010) is needed to fork the agent.');
+  const stateDir = path.join(dataDir, 'local-agent');
+  const enrolled = fs.existsSync(path.join(stateDir, 'agent.json'));
+  const env = { ...process.env };
+  if (!enrolled) env.NOOBLY_AGENT_TOKEN = (await localServers.createEnrolment(site, { by: 'development' })).token;
+  const bin = fileURLToPath(new URL('./agent/bin/noobly-agent.js', import.meta.url));
+  let child = null;
+  let stopped = false;
+  const start = () => {
+    child = spawn(process.execPath, [bin, 'run', '--controller', controller, '--state-dir', stateDir, '--dev'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    for (const out of [child.stdout, child.stderr]) out.on('data', (d) => { for (const line of String(d).split('\n').filter(Boolean)) log.info(`[local agent] ${line.replace(/^\S+ noobly-agent /, '')}`); });
+    child.on('exit', (code) => {
+      child = null;
+      if (!stopped) log.warn(`the local agent stopped (code ${code}); it is not restarted. Restart the app, or delete ${stateDir} to enrol again.`);
+    });
+  };
+  start();
+  log.info(`started a local agent for site ${site} (Docker on this machine) → ${controller}`);
+  return { kind, stop: () => { stopped = true; child?.kill('SIGTERM'); } };
 }
