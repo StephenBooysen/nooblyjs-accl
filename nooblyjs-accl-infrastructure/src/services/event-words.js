@@ -5,7 +5,7 @@
 // progress) are emitted but not kept.
 
 export const CLOUD = { gcp: 'GCP', aws: 'AWS' };
-const KIND = { vm: 'VM', app: 'app', database: 'database', bucket: 'bucket', account: 'account' };
+const KIND = { vm: 'VM', app: 'app', database: 'database', bucket: 'bucket', account: 'account', workload: 'workload' };
 const cloudOf = (p) => CLOUD[p.cloud] ?? p.cloud ?? 'the cloud';
 const resourceOf = (p) => `${KIND[p.resource?.type] ?? p.resource?.type ?? 'resource'} ${p.resource?.name ?? ''}`.trim();
 
@@ -66,6 +66,27 @@ const WORDS = {
     verb: 'Backup', tone: 'success',
     text: (p) => `${p.name} · ${p.size} snapshot`,
     summary: (p) => `backed up ${p.name} (${p.size})`,
+  },
+  // The platform layer (spec 8.1): a launcher's tenants' workloads. `tenantId` names whose.
+  'infrastructure.workload.created': { verb: 'Created', tone: 'info', text: (p) => `${p.kind} ${p.workload} for ${p.tenantId}` },
+  'infrastructure.workload.updated': { verb: 'Changed', tone: 'neutral', text: (p) => `${p.workload} for ${p.tenantId}${p.changed?.length ? ` (${p.changed.join(', ')})` : ''}` },
+  'infrastructure.workload.deleted': { verb: 'Deleted', tone: 'neutral', text: (p) => `${p.workload} for ${p.tenantId}` },
+  'infrastructure.workload.status': {
+    verb: 'Status', tone: 'neutral',
+    text: (p) => `${p.workload} for ${p.tenantId} is ${p.status}`,
+    summary: (p) => `saw ${p.workload} for ${p.tenantId} become ${p.status}`,
+  },
+  'infrastructure.deploy.started': {
+    verb: 'Building', tone: 'warning',
+    text: (p) => `${p.workload}${p.commit ? ` ${p.commit}` : ''} for ${p.tenantId}`,
+    summary: (p) => `started deploying ${p.workload}${p.commit ? ` ${p.commit}` : ''} for ${p.tenantId}`,
+  },
+  'infrastructure.deploy.progress': { quiet: true },
+  'infrastructure.deploy.succeeded': { verb: 'Deployed', tone: 'success', text: (p) => `${p.workload}${p.commit ? ` ${p.commit}` : ''} for ${p.tenantId}` },
+  'infrastructure.deploy.failed': {
+    verb: 'Failed', tone: 'danger',
+    text: (p) => `deploy of ${p.workload}${p.commit ? ` ${p.commit}` : ''} for ${p.tenantId}`,
+    summary: (p) => `could not deploy ${p.workload}${p.commit ? ` ${p.commit}` : ''} for ${p.tenantId}: ${p.reason}`,
   },
   'infrastructure.bucket.created': { verb: 'Created', tone: 'info', text: (p) => `bucket ${p.name} · ${cloudOf(p)} ${p.region}` },
 };

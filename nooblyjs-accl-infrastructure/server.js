@@ -49,7 +49,11 @@ launcher.mount(app);
 
 let hosted;
 try {
-  hosted = await mount(app, eventEmitter, serviceRegistry, { mountPath: MOUNT_PATH, dataDir, host: launcher.hostFor(dataDir) });
+  hosted = await mount(app, eventEmitter, serviceRegistry, {
+    mountPath: MOUNT_PATH, dataDir, host: launcher.hostFor(dataDir),
+    // INFRA_PLATFORM=true turns on the platform layer (spec 8.1) to try the Platform screen on its own.
+    platform: { enabled: process.env.INFRA_PLATFORM === 'true' },
+  });
   launcher.add(hosted, MOUNT_PATH);
   log.info(`mounted ${hosted.name} at ${MOUNT_PATH}`);
 } catch (err) {

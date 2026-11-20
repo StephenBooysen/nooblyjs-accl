@@ -38,3 +38,8 @@ export function apiErrors({ log }) {
     sendError(res, status, code, message, err.details);
   };
 }
+
+/** A tenant's limit is reached (platform layer, spec 8.1). */
+export const quota = (message, details) => new HttpError(429, 'quota', message, details);
+/** The cloud or the runtime can't take the work now; try again later. */
+export const unavailable = (message, details) => new HttpError(503, 'unavailable', message, details);

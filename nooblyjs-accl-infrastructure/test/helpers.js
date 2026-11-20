@@ -53,8 +53,9 @@ export function caller(base) {
  * @param {boolean} [o.seed]   write the seed story first
  * @param {(dataDir: string) => Promise<void>} [o.before]   writes files before mount() runs (restart tests)
  * @param {number} [o.mockStepMs]   the mock cloud's pace (0: cloud work finishes at once)
+ * @param {object} [o.platform]   mount()'s platform option ({ enabled: true } for the platform layer, spec 8.1)
  */
-export async function startApp({ mountPath = '/infrastructure', changeHost = (h) => h, serviceRegistry = createTestServiceRegistry(), eventEmitter = new EventEmitter(), seed = false, before, mockStepMs = 0 } = {}) {
+export async function startApp({ mountPath = '/infrastructure', changeHost = (h) => h, serviceRegistry = createTestServiceRegistry(), eventEmitter = new EventEmitter(), seed = false, before, mockStepMs = 0, platform } = {}) {
   const rootDir = await tempDir();
   const dataDir = path.join(rootDir, mountPath.replace(/^\//, '') || 'root');
   await fs.mkdir(dataDir, { recursive: true });
@@ -65,7 +66,7 @@ export async function startApp({ mountPath = '/infrastructure', changeHost = (h)
   let hosted = null;
   let mountError = null;
   try {
-    hosted = await mount(app, eventEmitter, serviceRegistry, { mountPath, dataDir, host: changeHost(stand.hostFor(dataDir)), mockStepMs, jobCheckMs: 0 });
+    hosted = await mount(app, eventEmitter, serviceRegistry, { mountPath, dataDir, host: changeHost(stand.hostFor(dataDir)), mockStepMs, jobCheckMs: 0, ...(platform ? { platform } : {}) });
   } catch (err) {
     mountError = err;
   }

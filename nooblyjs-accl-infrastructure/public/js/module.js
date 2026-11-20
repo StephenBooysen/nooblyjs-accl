@@ -19,4 +19,6 @@ export const routes = [
   { path: '/buckets/:name', nav: 'buckets', title: 'Bucket', page: () => import('./pages/buckets.js') },
   { path: '/accounts', nav: 'overview', title: 'Cloud accounts', page: () => import('./pages/accounts.js') },
   { path: '/activity', nav: 'overview', title: 'Activity', page: () => import('./pages/activity.js') },
+  // Only in the sidebar when the launcher turned the platform layer on (spec 8.1); operators only.
+  { path: '/platform', nav: 'platform', title: 'Platform', page: () => import('./pages/platform.js') },
 ];

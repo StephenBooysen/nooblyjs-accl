@@ -7,10 +7,11 @@ import { ACTIVITY_KINDS } from '../services/activity.js';
 import { accountRoutes } from './accounts.js';
 import { operationRoutes } from './operations.js';
 import { vmRoutes, sshKeyRoutes, myIp } from './vms.js';
+import { platformRoutes } from './platform.js';
 
 const READS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
-export function createApi({ host, log, about, seed, summary, accounts, operations, activity, catalog, cost, vms, sshKeys }) {
+export function createApi({ host, log, about, seed, summary, accounts, operations, activity, catalog, cost, vms, sshKeys, platform = null }) {
   const api = host.express.Router();
   api.use(host.express.json({ limit: '1mb' }));
   api.use(host.auth);
@@ -48,6 +49,8 @@ export function createApi({ host, log, about, seed, summary, accounts, operation
   api.use('/vms', vmRoutes({ host, vms }));
   api.use('/ssh-keys', sshKeyRoutes({ host, sshKeys }));
   api.get('/my-ip', myIp);
+  // The platform layer (spec 8.1), only when the launcher turned it on.
+  if (platform) api.use('/platform', platformRoutes({ host, platform }));
 
   api.use(apiNotFound);
   api.use(apiErrors({ log }));

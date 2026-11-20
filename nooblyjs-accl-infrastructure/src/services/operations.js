@@ -1,7 +1,7 @@
 // The operations engine (architecture.md §7): anything that takes longer than a request. An operation is a record
 // (operations/<id>.md, its body the log) with a list of steps; it is queued on the launcher's queue and worked in this
-// process, at most `perAccount` at a time per cloud account and one at a time per resource (a stop waits for the
-// launch). Each step is idempotent: it checks the record's saved state and the cloud before acting, so running it
+// process, at most `perAccount` at a time per cloud account, `perTenant` per platform tenant (phase 8) and one at a
+// time per resource (a stop waits for the launch). Each step is idempotent: it checks the record's saved state and the cloud before acting, so running it
 // again after a crash never creates anything twice.
 //
 // When the server stops, a running operation stays "running" on disk and recover() picks it up at the next start, at
@@ -17,7 +17,8 @@ const ACTIVE = new Set(['queued', 'running']);
 const PROGRESS_EVERY_MS = 1000;
 
 export const who = (person) => (person ? { id: person.id, name: person.name ?? person.id, ...(person.kind === 'agent' ? { kind: 'agent' } : {}) } : null);
-export const resourceKey = (resource) => (resource ? `${resource.type}:${resource.name}` : null);
+/** 'vm:web-01', or for a platform workload (phase 8) 'workload:<tenant>/<name>': names are unique per tenant. */
+export const resourceKey = (resource) => (resource ? `${resource.type}:${resource.tenant ? `${resource.tenant}/` : ''}${resource.name}` : null);
 export const inProgress = (op) => ACTIVE.has(op?.status);
 
 /**
@@ -30,10 +31,11 @@ export const inProgress = (op) => ACTIVE.has(op?.status);
  * @param {object} o.secrets      scrubs the log
  * @param {() => number} o.now
  * @param {number} [o.perAccount]
+ * @param {number} [o.perTenant]   operations at a time per platform tenant (INFRA_OPS_PER_TENANT; spec 8.1)
  */
-export function createOperations({ repos, host, log, queue, providers, secrets, now, perAccount = 4 }) {
+export function createOperations({ repos, host, log, queue, providers, secrets, now, perAccount = 4, perTenant = 2 }) {
   const types = new Map();
-  /** id → { key, account, controller, reason, promise } */
+  /** id → { key, account, tenant, controller, reason, promise } */
   const running = new Map();
   /** Queued ids waiting for their resource or account to be free, oldest first. */
   const waiting = [];
@@ -46,6 +48,7 @@ export function createOperations({ repos, host, log, queue, providers, secrets, 
   const emit = (type, payload, actor) => host.events.emit(type, payload, { actor: actor ?? null });
   const facts = (op) => ({
     operationId: op.id, type: op.type, label: op.label, resource: op.resource, account: op.account ?? null,
+    ...(op.tenant ? { tenantId: op.tenant } : {}),
     status: op.status, progress: op.progress ?? 0, step: current(op)?.label ?? null,
   });
   const current = (op) => op.steps?.find((s) => s.status === 'running') ?? op.steps?.find((s) => s.status === 'pending' || s.status === 'failed');
@@ -85,7 +88,7 @@ export function createOperations({ repos, host, log, queue, providers, secrets, 
   // ---------------------------------------------------------------- starting
 
   /** Queues an operation. Returns its view at once; the work happens in the background. */
-  async function start(type, { resource, account = null, input = {}, person = null }) {
+  async function start(type, { resource, account = null, tenant = null, input = {}, person = null }) {
     const def = types.get(type);
     if (!def) throw new Error(`No operation type ${type}.`);
     const op = {
@@ -93,6 +96,7 @@ export function createOperations({ repos, host, log, queue, providers, secrets, 
       type,
       resource,
       account,
+      ...(tenant ? { tenant } : {}),
       input,
       status: 'queued',
       progress: 0,
@@ -149,8 +153,9 @@ export function createOperations({ repos, host, log, queue, providers, secrets, 
       const busy = [...running.values()];
       if (key && busy.some((r) => r.key === key)) continue;
       if (op.account && busy.filter((r) => r.account === op.account).length >= perAccount) continue;
+      if (op.tenant && busy.filter((r) => r.tenant === op.tenant).length >= perTenant) continue;
       waiting.splice(waiting.indexOf(id), 1);
-      const entry = { key, account: op.account, controller: new AbortController(), reason: null };
+      const entry = { key, account: op.account, tenant: op.tenant ?? null, controller: new AbortController(), reason: null };
       running.set(id, entry);
       entry.promise = execute(id, entry)
         .catch((err) => log.error(`operation ${id}: ${err.stack ?? err.message}`))
@@ -380,6 +385,7 @@ export function createOperations({ repos, host, log, queue, providers, secrets, 
       label: op.label,
       resource: op.resource,
       account: op.account ?? null,
+      tenant: op.tenant ?? null,
       status: op.status,
       statusText: statusText(op),
       tone: TONE[op.status] ?? 'neutral',
@@ -412,8 +418,9 @@ export function createOperations({ repos, host, log, queue, providers, secrets, 
       return { ...view(op), log: parseLog(op.body) };
     },
     /** Newest first. `resource` is 'type:name'; status 'active' keeps the ones still going. */
-    async list({ resource, status, account } = {}) {
+    async list({ resource, status, account, tenant } = {}) {
       return (await repos.operations.list())
+        .filter((op) => tenant === undefined || (op.tenant ?? null) === tenant)
         .filter((op) => !resource || resourceKey(op.resource) === resource)
         .filter((op) => !account || op.account === account)
         .filter((op) => (status === 'active' ? inProgress(op) : !status || op.status === status))

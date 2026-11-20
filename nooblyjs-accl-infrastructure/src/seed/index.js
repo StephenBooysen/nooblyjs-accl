@@ -8,6 +8,9 @@
 // The story is the mockups' (product.md §9): Stevie's GCP and AWS accounts on the mock cloud, five VMs, six apps, three
 // databases and four buckets, the mock cloud's matching state (mock-cloud/), and the activity on the Overview. The
 // mock accounts' credentials are secrets, which can't be written as files: mount()'s seed() adds them after seeding.
+//
+// With the platform layer on (spec 8.1), src/seed/platform/ is written too: the tenant exclusivity-life with NooblyJS
+// Cloud's services (its product.md §9), their deploys, the mock runtime's containers and the deploy under way.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 export const STORY = { id: 'noobly-cloud', title: 'Stevie\'s GCP and AWS accounts (the mockups)' };
 const MARKER = ['seed.yaml'];
 const DATA_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'data');
+const PLATFORM_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'platform');
 const UNIT_MS = { m: 60_000, h: 3_600_000, d: 86_400_000 };
 /** What the accelerator needs to run with no sample content (a launcher's host.sampleData is false). */
 const SYSTEM = [];
@@ -37,25 +41,26 @@ export function placeTimes(text, now) {
     .replace(/\{\{month-start\}\}/g, `${now.toISOString().slice(0, 7)}-01T00:00:00.000Z`);
 }
 
-async function storyFiles() {
-  const entries = await fs.readdir(DATA_DIR, { recursive: true, withFileTypes: true }).catch((err) => {
+async function storyFiles(dir = DATA_DIR) {
+  const entries = await fs.readdir(dir, { recursive: true, withFileTypes: true }).catch((err) => {
     if (err.code === 'ENOENT') return [];
     throw err;
   });
   return entries
     .filter((e) => e.isFile() && !e.name.startsWith('.'))
-    .map((e) => path.relative(DATA_DIR, path.join(e.parentPath, e.name)).split(path.sep))
+    .map((e) => path.relative(dir, path.join(e.parentPath, e.name)).split(path.sep))
     .sort((a, b) => a.join('/').localeCompare(b.join('/')));
 }
 
 /**
  * Writes the seed story into the store.
  * @param {object} store   the accelerator's FsStore (rooted at its dataDir)
- * @param {{ reset?: boolean, now?: () => number|Date, content?: boolean }} [options]
+ * @param {{ reset?: boolean, now?: () => number|Date, content?: boolean, platform?: boolean }} [options]
  *   reset: remove everything in the folder first. Without it, a folder that is already seeded is left alone.
  *   content: false writes only what the accelerator needs to run, no sample data.
+ *   platform: also write the platform layer's story (only when the launcher turned the platform on).
  */
-export async function seed(store, { reset = false, now = () => Date.now(), content = true } = {}) {
+export async function seed(store, { reset = false, now = () => Date.now(), content = true, platform = false } = {}) {
   const existing = await store.readYaml(MARKER);
   if (existing && !reset) return { seeded: false, story: existing.story, seededAt: existing.seededAt };
 
@@ -75,9 +80,13 @@ export async function seed(store, { reset = false, now = () => Date.now(), conte
   for (const segments of files) {
     await store.writeText(segments, placeTimes(await fs.readFile(path.join(DATA_DIR, ...segments), 'utf8'), at));
   }
+  const platformFiles = platform && content ? await storyFiles(PLATFORM_DIR) : [];
+  for (const segments of platformFiles) {
+    await store.writeText(segments, placeTimes(await fs.readFile(path.join(PLATFORM_DIR, ...segments), 'utf8'), at));
+  }
   const marker = content
-    ? { story: STORY.id, title: STORY.title, seededAt: at.toISOString(), sampleData: true }
+    ? { story: STORY.id, title: STORY.title, seededAt: at.toISOString(), sampleData: true, ...(platformFiles.length ? { platform: 'exclusivity-life' } : {}) }
     : { story: null, content: false, seededAt: at.toISOString() };
   await store.writeYaml(MARKER, marker);
-  return { seeded: true, story: marker.story, seededAt: marker.seededAt, files: files.length };
+  return { seeded: true, story: marker.story, seededAt: marker.seededAt, files: files.length + platformFiles.length };
 }

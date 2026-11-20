@@ -27,6 +27,7 @@ import { createRemote } from './src/remote/index.js';
 import { createSummary } from './src/services/summary.js';
 import { withWords } from './src/services/event-words.js';
 import { seed as seedStory } from './src/seed/index.js';
+import { createPlatform } from './src/platform/index.js';
 
 const NAME = 'infrastructure';
 const MOUNT = /^\/[a-z0-9][a-z0-9-]{0,62}$/;
@@ -43,6 +44,9 @@ export const NAV = [
   { key: 'databases', label: 'Databases', path: '/databases', icon: 'layers' },
   { key: 'buckets', label: 'Buckets', path: '/buckets', icon: 'inbox' },
 ];
+
+/** The operators' row, added only when the platform layer is on (spec 8.1). */
+export const PLATFORM_NAV = { key: 'platform', label: 'Platform', path: '/platform', icon: 'cube' };
 
 /** The cloud providers this install may use (INFRA_PROVIDERS, comma-separated; architecture.md §15). */
 export function enabledProviders(value = process.env.INFRA_PROVIDERS) {
@@ -68,12 +72,14 @@ const envNumber = (name, fallback) => (process.env[name] === undefined || proces
  * @param {object} options.host
  * @param {number} [options.mockStepMs]   how long one unit of mock cloud work takes (INFRA_MOCK_STEP_MS; tests pass 0)
  * @param {number} [options.jobCheckMs]   how often to check which jobs are due (INFRA_SYNC_CHECK_MS; 0: no timer)
+ * @param {{ enabled?: boolean }} [options.platform]   the platform layer for a hosting launcher (spec 8.1); off unless enabled
  * @returns {Promise<object>} the HostedApp description, with shutdown()
  */
 export async function mount(app, eventEmitter, serviceRegistry, {
   mountPath = '/infrastructure', dataDir, host,
   mockStepMs = envNumber('INFRA_MOCK_STEP_MS', 1200),
   jobCheckMs = envNumber('INFRA_SYNC_CHECK_MS', 60_000),
+  platform: platformOption = {},
 } = {}) {
   // Check everything before mounting anything, so a failed start leaves nothing half-mounted (architecture.md §3.1).
   if (typeof app?.use !== 'function') throw new Error("nooblyjs-accelerator-infrastructure needs the launcher's Express app.");
@@ -84,6 +90,8 @@ export async function mount(app, eventEmitter, serviceRegistry, {
   const missing = NEEDS.filter((key) => !host?.[key]);
   if (missing.length) throw new Error(`nooblyjs-accelerator-infrastructure needs host.${missing.join(', host.')} from the launcher.`);
   const enabled = enabledProviders();
+  if (platformOption !== undefined && platformOption !== null && typeof platformOption !== 'object') throw new Error('options.platform is { enabled: true } or nothing.');
+  const platformOn = platformOption?.enabled === true;
 
   // The launcher's logging and queueing providers, as instances named after this accelerator (never ones of our own).
   const log = serviceRegistry.logger(serviceRegistry.getDefaultProviderType('logging'), { instanceName: NAME });
@@ -113,7 +121,7 @@ export async function mount(app, eventEmitter, serviceRegistry, {
   };
   host = { ...host, events: withWords(mirrored, { record: activity.record, log }) };
   const providers = createProviders({ enabled, store: host.store, secrets, catalog, mockStepMs, now });
-  const operations = createOperations({ repos, host, log, queue, providers, secrets, now, perAccount: envNumber('INFRA_OPS_PER_ACCOUNT', 4) });
+  const operations = createOperations({ repos, host, log, queue, providers, secrets, now, perAccount: envNumber('INFRA_OPS_PER_ACCOUNT', 4), perTenant: envNumber('INFRA_OPS_PER_TENANT', 2) });
   const accounts = createAccounts({ repos, host, operations, providers, secrets, catalog, config, now, log });
   const sync = createSync({ repos, operations, providers, config, host, log, now });
   const cost = createCost({ repos, catalog, store: host.store, now });
@@ -121,6 +129,10 @@ export async function mount(app, eventEmitter, serviceRegistry, {
   const sshKeys = createSshKeys({ repos, host, now });
   const vms = createVms({ repos, host, operations, providers, remote, sshKeys, catalog, config, cost, now, log });
   const summary = createSummary({ repos, accounts, activity, cost });
+  // The platform layer (spec 8.1): its operation types, records, routes and job exist only when the launcher asks.
+  const platform = platformOn
+    ? createPlatform({ store: host.store, host, operations, config, catalog, log, now, mockStepMs, workloadsPerTenant: envNumber('INFRA_WORKLOADS_PER_TENANT', 100) })
+    : null;
   const jobs = createJobs({
     now,
     log,
@@ -129,6 +141,7 @@ export async function mount(app, eventEmitter, serviceRegistry, {
       { name: 'account-check', every: 15 * 60_000, run: () => accounts.checkAll() },
       { name: 'inventory', every: () => sync.every(), run: () => sync.inventory() },
       { name: 'cost-snapshot', every: 60 * 60_000, run: () => cost.accrue() },
+      ...(platform ? [{ name: 'platform-inventory', every: () => sync.every(), run: () => platform.inventory() }] : []),
     ],
   });
 
@@ -137,11 +150,12 @@ export async function mount(app, eventEmitter, serviceRegistry, {
    * story's operations under way wait for resume() (or the next start), so a test sees the story as written.
    */
   const seed = async (options) => {
-    const result = await seedStory(host.store, { ...options, now });
+    const result = await seedStory(host.store, { ...options, now, platform: platformOn });
     if (result.seeded) {
       config.forget();
       providers.reset();
       remote.forget();
+      platform?.runtime.reset();
       await accounts.seedCredentials();
     }
     return result;
@@ -149,7 +163,7 @@ export async function mount(app, eventEmitter, serviceRegistry, {
 
   const router = host.express.Router();
   router.use('/api/v1', createApi({
-    host, log, seed, summary, accounts, operations, activity, catalog, cost, vms, sshKeys,
+    host, log, seed, summary, accounts, operations, activity, catalog, cost, vms, sshKeys, platform,
     about: { name: NAME, version: VERSION, mountPath, providers: enabled },
   }));
   // The browser files (module, pages, CSS). redirect: false, or /infrastructure would 301 to /infrastructure/.
@@ -180,11 +194,11 @@ export async function mount(app, eventEmitter, serviceRegistry, {
     icon: 'globe',
     mountPath,
     ui: { entry: 'js/module.js', styles: ['css/infrastructure.css'] },
-    nav: NAV,
+    nav: platform ? [...NAV, PLATFORM_NAV] : NAV,
     /** The sidebar's status card: the cloud accounts and their state (product.md §5). */
     status: () => summary.status(),
     /** What other accelerators may call. */
-    services: summary.services,
+    services: platform ? { ...summary.services, platform: platform.services } : summary.services,
     /** Writes the seed story into dataDir; `reset` removes what is there first. */
     seed: async ({ reset = false, content = host.sampleData !== false } = {}) => {
       await seed({ reset, content });
@@ -200,6 +214,8 @@ export async function mount(app, eventEmitter, serviceRegistry, {
     /** For the tests and a person in a hurry: run a job now ('account-check', 'inventory'). */
     runJob: (name) => jobs.run(name),
     /** For the tests and demos: the mock cloud of an account (failAt, outOfBand, resources). */
+    /** For the tests and demos, with the platform on: the mock workload runtime (failAt, list, outOfBand). */
+    ...(platform ? { mockRuntime: () => platform.runtime } : {}),
     mockCloud: async (accountId) => {
       const account = await repos.accounts.get(accountId);
       return account ? providers.mockCloud(account) : null;

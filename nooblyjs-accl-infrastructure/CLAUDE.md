@@ -30,6 +30,8 @@ API (`/infrastructure/api/v1`) are mounted by a launcher at `/infrastructure`.
   only (plus the `--inf-*` app tokens).
 - **Mock first.** Every feature works offline on the mock cloud provider (tests, seed story, screens) before the GCP
   and AWS adapters; services never call a cloud SDK directly (architecture.md §6).
+- **Platform layer** (phase 8): `src/platform/`, only when `mount()` gets `platform: { enabled: true }`. Every
+  workload call and repo call takes the tenant first; another tenant's workload is `not_found`.
 - **Writes** stay inside `dataDir` (the store refuses anything else); every write is audited; refusals are recorded.
 
 ## Commands
@@ -40,6 +42,7 @@ npm test               # every test on Express 5, then on Express 4 (offline)
 npm run test:express5  # one Express major only
 npm run test:express4
 npm run seed           # writes the seed story into data/infrastructure/ (-- --reset to start again)
+INFRA_PLATFORM=true npm start   # with the platform layer (spec 8.1): the Platform screen and the exclusivity-life seed tenant
 ```
 
 This repo lives in the `nooblyjs-accl` monorepo; `nooblyjs-core` is a separate repo next to it

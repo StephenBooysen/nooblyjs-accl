@@ -178,13 +178,13 @@ tick both).
 
 ### 8.1 Platform API and workloads — [spec](../../nooblyjs-accl-infrastructure/.claude/specs/08.1-platform-api.md)
 
-- [ ] 8.1.1 `platform` option on `mount()`; with it off, no routes, jobs or records are added.
-- [ ] 8.1.2 Workload and deploy records; tenant-scoped repos.
-- [ ] 8.1.3 `services.platform` in-process API with validation and error codes.
-- [ ] 8.1.4 Workload operation types, per-workload lock, per-tenant cap; tenant-tagged events mirrored to `eventEmitter`.
-- [ ] 8.1.5 Tenant and workload labels on everything created for a workload.
-- [ ] 8.1.6 Operator **Platform** page (read-only).
-- [ ] 8.1.7 Seed: tenant `exclusivity-life` with NooblyJS Cloud's eight services.
+- [x] 8.1.1 `platform` option on `mount()`; with it off, no routes, jobs or records are added.
+- [x] 8.1.2 Workload and deploy records; tenant-scoped repos.
+- [x] 8.1.3 `services.platform` in-process API with validation and error codes.
+- [x] 8.1.4 Workload operation types, per-workload lock, per-tenant cap; tenant-tagged events mirrored to `eventEmitter`.
+- [x] 8.1.5 Tenant and workload labels on everything created for a workload.
+- [x] 8.1.6 Operator **Platform** page (read-only).
+- [x] 8.1.7 Seed: tenant `exclusivity-life` with NooblyJS Cloud's eight services. Six workloads (api, storefront, agents, orders, records, etl); `database` and `cache` join as their own resource types with 8.6 and 8.7.
 
 ### 8.2 Container hosting on shared VMs — [spec](../../nooblyjs-accl-infrastructure/.claude/specs/08.2-container-hosting.md)
 
