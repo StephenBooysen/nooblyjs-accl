@@ -128,6 +128,13 @@ const toMb = (s) => {
   const unit = { B: 1 / 1048576, KiB: 1 / 1024, KB: 1 / 1000, MiB: 1, MB: 1, GiB: 1024, GB: 1000, TiB: 1048576 }[m[2]] ?? 1;
   return Math.round(n * unit * 10) / 10;
 };
+/** "1.2kB", "3.4MB", "512B" (docker stats' NetIO, decimal units) → bytes. */
+const toBytes = (s) => {
+  const m = /^([\d.]+)\s*([kKMGT]?i?B)/.exec(String(s ?? '').trim());
+  if (!m) return 0;
+  const unit = { B: 1, kB: 1e3, KB: 1e3, KiB: 1024, MB: 1e6, MiB: 1048576, GB: 1e9, GiB: 1073741824, TB: 1e12 }[m[2]] ?? 1;
+  return Math.round(Number(m[1]) * unit);
+};
 
 /**
  * @param {{ stateDir: string, docker?: string, git?: string }} o   stateDir holds env files while containers are created
@@ -312,7 +319,11 @@ export function createDocker({ stateDir, docker = 'docker', git = 'git' }) {
       const r = await must(docker, ['stats', '--no-stream', '--format', '{{json .}}', '--', ...mine.map((c) => c.name)]);
       return r.stdout.split('\n').filter(Boolean).map((l) => JSON.parse(l)).map((s) => {
         const [used, limit] = String(s.MemUsage).split('/');
-        return { name: s.Name, cpu: Number.parseFloat(s.CPUPerc) / 100, memoryMb: toMb(used), memoryLimitMb: toMb(limit), pids: Number(s.PIDs) || 0 };
+        const [rx, tx] = String(s.NetIO ?? '').split('/');
+        return {
+          name: s.Name, cpu: Math.round((Number.parseFloat(s.CPUPerc) || 0) / 100 * 1000) / 1000, memoryMb: toMb(used), memoryLimitMb: toMb(limit),
+          rxBytes: toBytes(rx), txBytes: toBytes(tx), pids: Number(s.PIDs) || 0,
+        };
       });
     },
   };

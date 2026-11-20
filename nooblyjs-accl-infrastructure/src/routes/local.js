@@ -68,6 +68,8 @@ export function localRoutes({ host, platform, local, mountPath }) {
       address: session?.address ?? null,
       facts: s.facts ?? {}, allocatable: s.allocatable ?? null, warnings: s.warnings ?? [],
       reserved: { cpu: sum(mine, 'cpu'), memoryMb: sum(mine, 'memoryMb') },
+      // What its containers use now, from the agent's 10 s stats (8.9.9); null until the first sample.
+      used: session ? platform.localRuntime?.serverStats(s.id) ?? null : null,
       instances: mine.map((i) => ({ name: i.name, tenant: i.labels?.['noobly-tenant'], workload: i.labels?.['noobly-workload'], status: i.status, url: i.url ?? null })),
       enrolledAt: s.enrolledAt ?? null, lastSeenAt: session?.lastSeenAt ?? s.lastSeenAt ?? null,
     };

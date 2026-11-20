@@ -9,13 +9,14 @@ import { startSession } from './core.js';
  * @param {{ server?: string, credential?: string, token?: string }} o.identity
  * @param {boolean} [o.dev]
  * @param {object} [o.facts]          overrides the mock server's facts
+ * @param {object} [o.docker]         an existing mock Docker (the same server reconnecting, with its containers)
  * @param {(w: object) => void} [o.onWelcome]
  * @returns {{ transport: object, docker: ReturnType<typeof createMockDocker>, session: ReturnType<typeof startSession>, welcome: Promise<object>, refused: Promise<{ reason: string, retry: boolean, type: string }> }}
  *   `transport` is the controller's end of the link
  */
-export function startMockAgent({ identity, dev = true, facts, onWelcome } = {}) {
+export function startMockAgent({ identity, dev = true, facts, docker: given, onWelcome } = {}) {
   const link = createLink();
-  const docker = createMockDocker({ facts });
+  const docker = given ?? createMockDocker({ facts });
   let welcomed;
   const welcome = new Promise((resolve) => { welcomed = resolve; });
   let refusedWith;

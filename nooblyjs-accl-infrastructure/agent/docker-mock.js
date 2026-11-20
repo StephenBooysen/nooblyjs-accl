@@ -104,20 +104,25 @@ export function createMockDocker({ facts = {}, now = () => Date.now() } = {}) {
       return { exitCode: 0, durationMs: 5, peakMemoryMb: 32 };
     },
 
-    /** Replays lines after `since`, then follows. Returns stop(). */
+    /** Replays lines from `since` (inclusive, like `docker logs --since`), then follows. Returns stop(). */
     async logs(name, { since }, onLine, onEnd) {
       const c = containers.get(name);
-      for (const l of c.lines) if (!since || l.at > since) onLine(l.out, l.line, l.at);
+      for (const l of c.lines) if (!since || l.at >= since) onLine(l.out, l.line, l.at);
       const follower = { onLine, onEnd };
       c.followers.add(follower);
       return () => c.followers.delete(follower);
     },
 
     async stats(labels) {
-      return (await this.list(labels)).map((c) => {
-        const { args } = containers.get(c.name);
-        return { name: c.name, cpu: 0.02, cpuLimit: args.cpu, memoryMb: 48, memoryLimitMb: args.memoryMb, rxBytes: 1024, txBytes: 2048 };
+      return (await this.list(labels)).filter((c) => c.state === 'running').map((c) => {
+        const { args, usage } = containers.get(c.name);
+        return { name: c.name, cpu: 0.02, cpuLimit: args.cpu, memoryMb: 48, memoryLimitMb: args.memoryMb, rxBytes: 1024, txBytes: 2048, pids: 7, ...usage };
       });
+    },
+    /** Test hook: what stats() reports for a container from now on (cpu, memoryMb, rxBytes, txBytes). */
+    setUsage(name, usage) {
+      const c = containers.get(name);
+      if (c) c.usage = { ...c.usage, ...usage };
     },
 
     // ---- for tests ------------------------------------------------------------------------------

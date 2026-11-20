@@ -71,6 +71,14 @@ test('the real agent builds, runs, checks, follows and removes a Node app on thi
     stop();
     assert.ok(seen.some((l) => l.includes(`listening on ${port}`)), seen.join('\n'));
 
+    // 8.9.9: what stats.watch sends, read from this Docker: CPU in vCPU, memory in MB under the limit, network bytes.
+    const [st] = await docker.stats(ok('stats.watch', { labels, stream: 's-real-1' }).labels);
+    assert.equal(st.name, name);
+    assert.ok(st.memoryMb > 0 && st.memoryMb <= 256, JSON.stringify(st));
+    assert.equal(st.memoryLimitMb, 256);
+    assert.ok(Number.isFinite(st.cpu) && st.cpu >= 0);
+    assert.ok(Number.isInteger(st.rxBytes) && Number.isInteger(st.txBytes));
+
     assert.deepEqual((await docker.list(ok('container.list', { labels }).labels)).map((x) => x.name), [name]);
     await docker.remove(name);
     assert.deepEqual(await docker.list(labels), []);

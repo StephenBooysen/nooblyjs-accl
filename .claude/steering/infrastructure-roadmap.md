@@ -254,12 +254,12 @@ Needs only 8.1, so it can come before 8.2–8.5: it is the first real runtime (L
 - [x] 8.9.1 Protocol module (frames, command schemas, size limits) with unit tests; the in-process mock agent.
 - [x] 8.9.2 `host.onUpgrade` in the host contract; the agent endpoint, hello and heartbeat, offline detection.
 - [x] 8.9.3 Sites, servers and enrolment records; tokens and credentials; API and the operator's *Sites and servers* section.
-- [ ] 8.9.4 The `local` provider and server facts, allocatable and warnings.
+- [x] 8.9.4 The `local` provider and server facts, allocatable and warnings.
 - [x] 8.9.5 The agent: Docker over the socket, `network.ensure`, `container.run/stop/remove/list` with the hardening flags, labels.
 - [x] 8.9.6 Builds on the agent: clone (`https://`, `file://` in dev), runtime templates, streamed and masked build log.
-- [ ] 8.9.7 `runtime-local.js`: placement over online servers, rollout, health check, jobs, "Site … is full", re-placement after 5 minutes offline.
+- [x] 8.9.7 `runtime-local.js`: placement over online servers, rollout, health check, jobs, "Site … is full", re-placement after 5 minutes offline.
 - [x] 8.9.8 Environment through `resolveSecrets` and env files; never on a command line or in a log.
-- [ ] 8.9.9 Logs and stats streaming into `telemetry.subscribe()` with cursors and resume.
+- [x] 8.9.9 Logs and stats streaming into `telemetry.subscribe()` with cursors and resume.
 - [x] 8.9.10 `install.sh` (systemd, or foreground without it) and `noobly-agent` CLI; the opt-in real-Docker test.
 
 **Exit check:** NooblyJS Cloud's seed story runs for real in one region: two tenants' web services (2 instances each)

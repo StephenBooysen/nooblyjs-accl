@@ -70,6 +70,15 @@ const WORDS = {
   // The platform layer (spec 8.1): a launcher's tenants' workloads. `tenantId` names whose.
   'infrastructure.workload.created': { verb: 'Created', tone: 'info', text: (p) => `${p.kind} ${p.workload} for ${p.tenantId}` },
   'infrastructure.workload.updated': { verb: 'Changed', tone: 'neutral', text: (p) => `${p.workload} for ${p.tenantId}${p.changed?.length ? ` (${p.changed.join(', ')})` : ''}` },
+  'infrastructure.workload.instances': {
+    verb: 'Instances', tone: 'warning',
+    text: (p) => ({
+      unknown: `${p.workload} for ${p.tenantId}: ${p.instance} is unreachable (server ${p.server} is offline)`,
+      back: `${p.workload} for ${p.tenantId}: ${p.instance} is serving again (server ${p.server} is back)`,
+      moved: `${p.workload} for ${p.tenantId}: ${p.instance} moved off ${p.server} to ${p.to} as ${p.name}`,
+      stuck: `${p.workload} for ${p.tenantId}: ${p.instance} could not move off ${p.server}: ${p.reason}`,
+    })[p.change] ?? `${p.workload} for ${p.tenantId}: ${p.change}`,
+  },
   'infrastructure.workload.deleted': { verb: 'Deleted', tone: 'neutral', text: (p) => `${p.workload} for ${p.tenantId}` },
   'infrastructure.workload.status': {
     verb: 'Status', tone: 'neutral',

@@ -48,7 +48,8 @@ function usage(s) {
   const r = s.reserved;
   const tone = (x) => (x >= 0.9 ? 'danger' : x >= 0.75 ? 'warning' : undefined);
   return html`${meter({ label: 'CPU', value: `${r.cpu} of ${cpu} vCPU`, ratio: cpu ? r.cpu / cpu : 0, tone: tone(cpu ? r.cpu / cpu : 0) })}
-    ${meter({ label: 'Memory', value: `${memory(r.memoryMb)} of ${memory(memoryMb)}`, ratio: memoryMb ? r.memoryMb / memoryMb : 0, tone: tone(memoryMb ? r.memoryMb / memoryMb : 0) })}`;
+    ${meter({ label: 'Memory', value: `${memory(r.memoryMb)} of ${memory(memoryMb)}`, ratio: memoryMb ? r.memoryMb / memoryMb : 0, tone: tone(memoryMb ? r.memoryMb / memoryMb : 0) })}
+    ${s.used ? html`<span class="inf-sub">In use now: ${s.used.cpu} vCPU · ${memory(Math.round(s.used.memoryMb))} across ${plural(s.used.instances, 'instance')}</span>` : ''}`;
 }
 
 function facts(s) {

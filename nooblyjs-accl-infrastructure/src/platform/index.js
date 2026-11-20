@@ -61,6 +61,29 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
   // as infrastructure.workload.log on the launcher's EventEmitter (straight, not through Activity).
   const LOG_KEEP = 2000;
   const logBuffers = new Map(); // `${tenant}/${workload}` → { seq, lines: [{ seq, at, out, line, instance }] }
+  // Telemetry (spec 8.5 R1, R3, R4; delivered for local sites by 8.9.9): subscribers and events get every log line and
+  // every 10 s sample as it arrives; the accelerator keeps only short buffers (the log lines above, 15 minutes of
+  // samples per instance).
+  const subscribers = new Set();
+  const SAMPLE_KEEP_MS = 15 * 60_000;
+  const sampleBuffers = new Map(); // `${tenant}/${workload}` → Map(instance → samples[])
+  const raw = (type, payload) => {
+    try {
+      emitRaw(type, payload);
+    } catch (err) {
+      log.warn(`an ${type} listener failed: ${err.message}`);
+    }
+  };
+  const tell = (kind, payload) => {
+    for (const s of subscribers) {
+      if (s.tenantId && s.tenantId !== payload.tenantId) continue;
+      try {
+        s[kind]?.(payload);
+      } catch (err) {
+        log.warn(`a telemetry subscriber failed: ${err.message}`);
+      }
+    }
+  };
   function onLog(tenantId, workload, lines) {
     const key = `${tenantId}/${workload}`;
     const buf = logBuffers.get(key) ?? { seq: 0, lines: [] };
@@ -68,15 +91,40 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
     buf.lines.push(...added);
     if (buf.lines.length > LOG_KEEP) buf.lines.splice(0, buf.lines.length - LOG_KEEP);
     logBuffers.set(key, buf);
-    try {
-      emitRaw('infrastructure.workload.log', { tenantId, workload, lines: added });
-    } catch (err) {
-      log.warn(`an infrastructure.workload.log listener failed: ${err.message}`);
-    }
+    raw('infrastructure.workload.log', { tenantId, workload, lines: added });
+    // 8.5 R3's shape: { tenantId, workload, instance, at, stream, line }.
+    const tagged = added.map((l) => ({ tenantId, workload, instance: l.instance, at: l.at, stream: l.out, line: l.line, seq: l.seq }));
+    raw('infrastructure.telemetry.logs', { tenantId, workload, lines: tagged });
+    tell('onLogs', { tenantId, workload, lines: tagged });
+  }
+  function onMetrics(tenantId, workload, sample) {
+    const key = `${tenantId}/${workload}`;
+    const byInstance = sampleBuffers.get(key) ?? new Map();
+    const list = byInstance.get(sample.instance) ?? [];
+    list.push(sample);
+    const cutoff = now() - SAMPLE_KEEP_MS;
+    while (list.length && Date.parse(list[0].at) < cutoff) list.shift();
+    byInstance.set(sample.instance, list);
+    // Instances that have sent nothing for the whole window are gone.
+    for (const [name, l] of byInstance) if (!l.length || Date.parse(l.at(-1).at) < cutoff) byInstance.delete(name);
+    sampleBuffers.set(key, byInstance);
+    const payload = { tenantId, workload, samples: [sample] };
+    raw('infrastructure.telemetry.metrics', payload);
+    tell('onMetrics', payload);
   }
 
   // Local sites are regions too (spec 8.9 R1); their workloads run on the local runtime, everything else on the mock.
-  const localRuntime = local ? createLocalRuntime({ store, servers: local.servers, hub: local.hub, resolveSecrets, onLog, now, log }) : null;
+  // An instance on a lost server went unknown, came back, moved, or could not move (spec 8.9 R7). Activity, which the
+  // launcher's EventEmitter also hears.
+  function onInstances(c) {
+    emit('infrastructure.workload.instances', c).catch((err) => log.warn(`instances event: ${err.message}`));
+  }
+  const localRuntime = local ? createLocalRuntime({
+    store, servers: local.servers, hub: local.hub, resolveSecrets, onLog, onInstances, onMetrics, now, log,
+    // Raw, not Activity: a launcher's proxy re-reads workloads.endpoints() when it hears this.
+    onEndpoints: (tenantId, workload) => raw('infrastructure.workload.endpoints', { tenantId, workload }),
+    statsEveryS: local.statsEveryS ?? 10, drainMs: local.drainMs ?? 2000,
+  }) : null;
   const pick = (a) => (localRuntime?.handles(a?.region) ? localRuntime : mockRuntime);
   const runtime = {
     name: 'routed',
@@ -611,7 +659,9 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
       for (const w of await repos.workloads.list(tenantId)) {
         if (busy.has(`workload:${tenantId}/${w.name}`)) continue;
         const mine = await runtime.list({ labels: { 'noobly-install': installId, 'noobly-tenant': tenantId, 'noobly-workload': w.name } });
-        const observed = { running: mine.filter((c) => c.status === 'running').length, stopped: mine.filter((c) => c.status !== 'running').length, seenAt: iso() };
+        // `unknown`: on a local server that is offline (spec 8.9 R7), neither serving nor known to be stopped.
+        const unknown = mine.filter((c) => c.status === 'unknown').length;
+        const observed = { running: mine.filter((c) => c.status === 'running').length, stopped: mine.filter((c) => c.status !== 'running' && c.status !== 'unknown').length, ...(unknown ? { unknown } : {}), seenAt: iso() };
         await repos.workloads.update(tenantId, w.name, (r) => r && { ...r, observed });
       }
     }
@@ -650,6 +700,27 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
       deploys,
       usage,
       capacity,
+      /**
+       * Telemetry (spec 8.5 R4): subscribe({ onMetrics, onLogs, tenantId? }) → unsubscribe(). onLogs({ tenantId,
+       * workload, lines }) and onMetrics({ tenantId, workload, samples }) as they arrive; `tenantId` narrows to one
+       * tenant. metrics() reads the last 15 minutes kept per instance.
+       */
+      telemetry: {
+        subscribe({ onMetrics: m, onLogs: l, tenantId } = {}) {
+          const sub = { onMetrics: m, onLogs: l, tenantId: tenantId ?? null };
+          subscribers.add(sub);
+          return () => subscribers.delete(sub);
+        },
+        async metrics(tenantId, name, { since } = {}) {
+          await mustGet(tenantId, name);
+          const from = since ? Date.parse(since) : 0;
+          const byInstance = sampleBuffers.get(`${tenantId}/${name}`) ?? new Map();
+          return {
+            instances: [...byInstance].map(([instance, list]) => ({ instance, samples: list.filter((x) => Date.parse(x.at) > from) })),
+            keptMinutes: SAMPLE_KEEP_MS / 60_000,
+          };
+        },
+      },
       /** Runtime log lines (spec 8.9 R11): the last ones kept, after a cursor. */
       logs: {
         async tail(tenantId, name, { after = 0, limit = 500 } = {}) {
