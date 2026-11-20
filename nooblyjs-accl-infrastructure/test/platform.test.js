@@ -103,6 +103,15 @@ test('8.1.3 input is checked: invalid names each field, conflict, not_found, quo
   delete process.env.INFRA_WORKLOADS_PER_TENANT;
   const p = t.hosted.services.platform;
   try {
+    const named = await p.workloads.create('acme', { name: 'pinned', kind: 'worker', source: { repo: 'acme/w' } }, { actor: PAT, commit: 'abcdef0123', message: 'Ship it' });
+    await t.hosted.idle();
+    const pinned = (await p.deploys.list('acme', 'pinned')).deploys[0];
+    assert.deepEqual([pinned.commit, pinned.message], ['abcdef0123', 'Ship it']);
+    assert.equal(named.workload.name, 'pinned');
+    assert.equal((await refusal(() => p.workloads.create('acme', { name: 'x', source: { repo: 'a/b' } }, { commit: 'zzz' }))).details.fields.commit, '7 to 40 hex characters.');
+    await p.workloads.remove('acme', 'pinned', { actor: PAT });
+    await t.hosted.idle();
+
     const bad = await refusal(() => p.workloads.create('acme', {
       name: 'API', kind: 'worker', source: { repo: 'acme/api', image: 'x' }, run: { port: 80, env: [{ key: 'A', value: '1' }, { key: 'A', value: '2' }] }, instances: 99, region: 'mars-1',
     }));
@@ -166,7 +175,11 @@ test('exit check: two tenants create workloads on the mock cloud, deploy events 
       assert.ok(seen.some((e) => e.type === 'infrastructure.operation.succeeded' && e.tenantId === tenantId));
     }
 
-    // acme's deploy id, asked for as globex, is not found; so is everything else of acme's.
+    // The deploy log is the tenant's: no install labels in it (they go in the operation's log, for operators).
+    const firstLog = (await p.deploys.get('acme', 'api', (await p.workloads.get('acme', 'api')).current.deployId)).log;
+    assert.ok(firstLog.length > 2 && !firstLog.some((l) => /noobly-install|managed-by/.test(l.text)));
+
+        // acme's deploy id, asked for as globex, is not found; so is everything else of acme's.
     const acmeDeploy = (await p.workloads.get('acme', 'api')).current.deployId;
     assert.equal((await refusal(() => p.deploys.get('globex', 'api', acmeDeploy))).code, 'not_found');
     assert.equal((await p.deploys.get('acme', 'api', acmeDeploy)).result, 'live');

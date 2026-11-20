@@ -175,8 +175,9 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
         key: 'prepare',
         label: 'Prepare the workload',
         async run(ctx) {
+          // The labels go in the operation's log (operators), not the deploy log a launcher shows its tenant.
           const labels = await labelsOf(ctx);
-          await deployLog(ctx.op.tenant, ctx.op.resource.name, ctx.input.deployId)(`Labels: ${Object.entries(labels).map(([k, v]) => `${k}=${v}`).join(', ')}`);
+          await ctx.log(`Labels: ${Object.entries(labels).map(([k, v]) => `${k}=${v}`).join(', ')}`);
           return {};
         },
       },
@@ -325,6 +326,11 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
   /** Until 8.3 reads the repository, a deploy without a commit gets a made-up one, as the mock cloud would. */
   const mockCommit = () => crypto.randomBytes(4).toString('hex').slice(0, 7);
 
+  function checkCommit(commit, message) {
+    if (commit !== undefined && commit !== null && !/^[0-9a-f]{7,40}$/.test(commit)) throw unprocessable('commit is a Git commit id.', { fields: { commit: '7 to 40 hex characters.' } });
+    if (message !== undefined && message !== null && (typeof message !== 'string' || message.length > 500)) throw unprocessable('message is up to 500 characters.', { fields: { message: 'Up to 500 characters.' } });
+  }
+
   function refuseWhile(w, statuses, message) {
     if (statuses.includes(w.status)) throw new HttpError(409, 'conflict', message);
   }
@@ -332,10 +338,11 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
   // ---------------------------------------------------------------- services.platform
 
   const workloads = {
-    /** Creates a workload and starts its first deploy. → { workload, operation } */
-    async create(tenantId, spec, { actor } = {}) {
+    /** Creates a workload and starts its first deploy (of `commit`, or the branch's latest). → { workload, operation } */
+    async create(tenantId, spec, { actor, commit, message } = {}) {
       tenantOf(tenantId);
       const by = actorOf(actor);
+      checkCommit(commit, message);
       const checked = checkSpec(spec, { regions });
       if (await repos.workloads.get(tenantId, checked.name)) throw conflict(`There is already a workload called ${checked.name}.`, { fields: { name: 'Taken in this workspace.' } });
       if ((await repos.workloads.list(tenantId)).length >= workloadsPerTenant) throw quota(`A tenant may have up to ${workloadsPerTenant} workloads.`);
@@ -344,7 +351,7 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
       await repos.workloads.write(tenantId, record);
       await audit(by, 'workload.created', tenantId, checked.name, { kind: checked.kind });
       await emit('infrastructure.workload.created', { tenantId, workload: checked.name, kind: checked.kind, region: checked.region }, by);
-      const { operation } = await startDeploy('workload.create', tenantId, record, { trigger: 'manual', actor: by });
+      const { operation } = await startDeploy('workload.create', tenantId, record, { trigger: 'manual', actor: by, commit: commit ?? undefined, message });
       return { workload: view(await repos.workloads.get(tenantId, checked.name)), operation };
     },
 
@@ -409,8 +416,7 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
       const w = await mustGet(tenantId, name);
       const by = actorOf(actor);
       if (!TRIGGERS.includes(trigger)) throw unprocessable(`trigger is one of ${TRIGGERS.join(', ')}.`, { fields: { trigger: 'Unknown trigger.' } });
-      if (commit !== undefined && commit !== null && !/^[0-9a-f]{7,40}$/.test(commit)) throw unprocessable('commit is a Git commit id.', { fields: { commit: '7 to 40 hex characters.' } });
-      if (message !== undefined && (typeof message !== 'string' || message.length > 500)) throw unprocessable('message is up to 500 characters.', { fields: { message: 'Up to 500 characters.' } });
+      checkCommit(commit, message);
       refuseWhile(w, ['deleting'], `${name} is being deleted.`);
       refuseWhile(w, ['suspended'], `${name} is suspended. Resume it to deploy.`);
       await setStatus(tenantId, name, 'deploying');
