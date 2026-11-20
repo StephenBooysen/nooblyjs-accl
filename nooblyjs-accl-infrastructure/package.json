@@ -8,7 +8,8 @@
   "main": "index.js",
   "exports": {
     ".": "./index.js",
-    "./host": "./src/host/standalone.js"
+    "./host": "./src/host/standalone.js",
+    "./agent/*": "./agent/*.js"
   },
   "engines": {
     "node": ">=22.12"
@@ -22,7 +23,8 @@
   },
   "dependencies": {
     "nooblyjs-core": "file:../../nooblyjs-core",
-    "ssh2": "^1.16.0"
+    "ssh2": "^1.16.0",
+    "ws": "^8.23.0"
   },
   "devDependencies": {
     "express": "^5.2.1",

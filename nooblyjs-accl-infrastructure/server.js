@@ -85,6 +85,8 @@ const port = Number(process.env.PORT ?? DEFAULT_PORT);
 const server = app.listen(port, () => {
   log.info(`Noobly Cloud standalone on http://localhost:${port}${MOUNT_PATH} (API at ${MOUNT_PATH}/api/v1, data in ${path.relative(ROOT, dataDir)})`);
 });
+// Local servers' agents connect to /infrastructure/agent/v1 (spec 8.9): the launcher passes upgrades through.
+launcher.attachUpgrades(server);
 
 let stopping = false;
 async function stop(signal) {

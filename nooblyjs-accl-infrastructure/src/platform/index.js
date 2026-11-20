@@ -12,6 +12,7 @@ import { isCloudError } from '../providers/errors.js';
 import { inProgress } from '../services/operations.js';
 import { createPlatformRepos } from './repos.js';
 import { createMockRuntime } from './runtime-mock.js';
+import { createLocalRuntime } from './runtime-local.js';
 import { checkSpec, specOf, same, CHANGEABLE, REDEPLOY, RESCALE } from './spec.js';
 import { isTenantId, isWorkloadName, KINDS, STATUSES } from './names.js';
 
@@ -46,12 +47,58 @@ function tenantOf(tenantId) {
  * @param {() => number} o.now
  * @param {number} [o.mockStepMs]
  * @param {number} [o.workloadsPerTenant]   INFRA_WORKLOADS_PER_TENANT
+ * @param {{ servers: object, hub: object }} [o.local]   local servers (spec 8.9): their records and the agent hub
+ * @param {(tenantId: string, refs: string[]) => Promise<Record<string, string>>} [o.resolveSecrets]   the launcher opens secretRefs
+ * @param {(type: string, payload: object) => void} [o.emitRaw]   the launcher's EventEmitter, for runtime log lines (not Activity)
  */
-export function createPlatform({ store, host, operations, config, catalog, log, now, mockStepMs = 1200, workloadsPerTenant = 100 }) {
+export function createPlatform({ store, host, operations, config, catalog, log, now, mockStepMs = 1200, workloadsPerTenant = 100, local = null, resolveSecrets, emitRaw = () => {} }) {
   const repos = createPlatformRepos(store, { log });
-  const runtime = createMockRuntime({ store, stepMs: mockStepMs, now });
+  const mockRuntime = createMockRuntime({ store, stepMs: mockStepMs, now });
   const iso = () => new Date(now()).toISOString();
   const regions = new Set(['gcp', 'aws'].flatMap((cloud) => (catalog.forCloud(cloud)?.regions ?? []).map((r) => r.id)));
+
+  // Runtime log lines per workload (spec 8.9 R11), the last LOG_KEEP of them, with a cursor; each batch is also emitted
+  // as infrastructure.workload.log on the launcher's EventEmitter (straight, not through Activity).
+  const LOG_KEEP = 2000;
+  const logBuffers = new Map(); // `${tenant}/${workload}` → { seq, lines: [{ seq, at, out, line, instance }] }
+  function onLog(tenantId, workload, lines) {
+    const key = `${tenantId}/${workload}`;
+    const buf = logBuffers.get(key) ?? { seq: 0, lines: [] };
+    const added = lines.map((l) => ({ seq: (buf.seq += 1), at: l.at, out: l.out, line: l.line, instance: l.instance ?? null }));
+    buf.lines.push(...added);
+    if (buf.lines.length > LOG_KEEP) buf.lines.splice(0, buf.lines.length - LOG_KEEP);
+    logBuffers.set(key, buf);
+    try {
+      emitRaw('infrastructure.workload.log', { tenantId, workload, lines: added });
+    } catch (err) {
+      log.warn(`an infrastructure.workload.log listener failed: ${err.message}`);
+    }
+  }
+
+  // Local sites are regions too (spec 8.9 R1); their workloads run on the local runtime, everything else on the mock.
+  const localRuntime = local ? createLocalRuntime({ store, servers: local.servers, hub: local.hub, resolveSecrets, onLog, now, log }) : null;
+  const pick = (a) => (localRuntime?.handles(a?.region) ? localRuntime : mockRuntime);
+  const runtime = {
+    name: 'routed',
+    build: (a) => pick(a).build(a),
+    rollout: (a) => pick(a).rollout(a),
+    health: (a) => pick(a).health(a),
+    setStatus: (a) => pick(a).setStatus(a),
+    remove: (a) => pick(a).remove(a),
+    run: (a) => pick(a).run(a),
+    list: async (a) => [...await mockRuntime.list(a), ...(localRuntime ? await localRuntime.list(a) : [])],
+    images: async (a) => [...await mockRuntime.images(a), ...(localRuntime ? await localRuntime.images(a) : [])],
+    // The mock's test hooks.
+    failAt: (...args) => mockRuntime.failAt(...args),
+    outOfBand: (fn) => mockRuntime.outOfBand(fn),
+    reset: () => mockRuntime.reset(),
+  };
+  /** Registers a local site as a region. */
+  function addLocalSite(id) {
+    if (!localRuntime) return;
+    localRuntime.addSite(id);
+    regions.add(id);
+  }
 
   /** R6: the install's labels and the workload's. */
   const labelsFor = (tenantId, name) => config.labels({ 'noobly-tenant': tenantId, 'noobly-workload': name });
@@ -92,10 +139,13 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
           await emit('infrastructure.deploy.started', { tenantId: ctx.op.tenant, workload: w.name, deployId, commit, status: 'building', step: 1, of: 3, trigger: ctx.input.trigger }, ctx.op.requestedBy);
           await ctx.save({ deployStarted: true });
         }
-        const { image } = await runtime.build({ labels: await labelsOf(ctx), commit, source: w.source ?? {}, runtime: w.build?.runtime, signal: ctx.signal, log });
-        await repos.deploys.update(ctx.op.tenant, w.name, deployId, (d) => d && { ...d, image, result: 'deploying' });
-        await emit('infrastructure.deploy.progress', { tenantId: ctx.op.tenant, workload: w.name, deployId, commit, status: 'deploying', step: 2, of: 3 }, ctx.op.requestedBy);
-        return { state: { image } };
+        const built = await runtime.build({ labels: await labelsOf(ctx), commit, source: w.source ?? {}, runtime: w.build?.runtime, build: w.build ?? {}, region: w.region, deployId, signal: ctx.signal, log });
+        const { image } = built;
+        // A real build says which commit it built (the branch's latest when none was asked for).
+        const builtCommit = built.commit && built.commit !== commit ? built.commit.slice(0, 40) : null;
+        await repos.deploys.update(ctx.op.tenant, w.name, deployId, (d) => d && { ...d, image, result: 'deploying', ...(builtCommit ? { commit: builtCommit, message: d.message ?? `Latest on ${w.source?.branch}` } : {}) });
+        await emit('infrastructure.deploy.progress', { tenantId: ctx.op.tenant, workload: w.name, deployId, commit: builtCommit ?? commit, status: 'deploying', step: 2, of: 3 }, ctx.op.requestedBy);
+        return { state: { image, ...(builtCommit ? { commit: builtCommit } : {}) } };
       },
     },
     {
@@ -105,7 +155,7 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
         const w = await workloadOf(ctx);
         if (w.kind === 'job') return { skipped: true, reason: 'a job runs when it is asked to' };
         const log = deployLog(ctx.op.tenant, w.name, ctx.input.deployId);
-        await runtime.rollout({ labels: await labelsOf(ctx), image: ctx.state.image, instances: w.instances, plan: w.plan, region: w.region, signal: ctx.signal, log });
+        await runtime.rollout({ labels: await labelsOf(ctx), image: ctx.state.image, instances: w.instances, plan: w.plan, region: w.region, run: w.run, healthCheck: w.healthCheck, signal: ctx.signal, log });
         await emit('infrastructure.deploy.progress', { tenantId: ctx.op.tenant, workload: w.name, deployId: ctx.input.deployId, commit: ctx.input.commit, status: 'deploying', step: 3, of: 3 }, ctx.op.requestedBy);
         return {};
       },
@@ -116,7 +166,7 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
       async run(ctx) {
         const w = await workloadOf(ctx);
         if (w.kind === 'job') return { skipped: true, reason: 'a job has no health check' };
-        await runtime.health({ labels: await labelsOf(ctx), path: w.healthCheck?.path ?? null, signal: ctx.signal, log: deployLog(ctx.op.tenant, w.name, ctx.input.deployId) });
+        await runtime.health({ labels: await labelsOf(ctx), path: w.healthCheck?.path ?? null, region: w.region, signal: ctx.signal, log: deployLog(ctx.op.tenant, w.name, ctx.input.deployId) });
         return {};
       },
     },
@@ -125,7 +175,8 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
   async function deploySucceeded(ctx) {
     const tenantId = ctx.op.tenant;
     const name = ctx.op.resource.name;
-    const { deployId, commit } = ctx.input;
+    const { deployId } = ctx.input;
+    const commit = ctx.state.commit ?? ctx.input.commit;
     const image = ctx.state.image;
     await repos.deploys.update(tenantId, name, deployId, (d) => d && { ...d, result: 'live', endedAt: iso() });
     const w = await repos.workloads.get(tenantId, name);
@@ -146,7 +197,8 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
     if (w?.current?.image && w.kind !== 'job') {
       // The deploy before this one keeps serving: put its instances back (8.4 makes the rollout itself zero-downtime).
       try {
-        await runtime.rollout({ labels: await labelsFor(tenantId, name), image: w.current.image, instances: w.instances, plan: w.plan, region: w.region, log: deployLog(tenantId, name, deployId) });
+        // The local runtime never stopped the old instances; the mock puts them back.
+        if (!localRuntime?.handles(w.region)) await runtime.rollout({ labels: await labelsFor(tenantId, name), image: w.current.image, instances: w.instances, plan: w.plan, region: w.region, run: w.run, healthCheck: w.healthCheck, log: deployLog(tenantId, name, deployId) });
         await deployLog(tenantId, name, deployId)(`Kept ${w.current.commit ?? w.current.image} running`);
       } catch (rollbackErr) {
         log.warn(`platform ${tenantId}/${name}: could not put ${w.current.image} back: ${rollbackErr.message}`);
@@ -204,7 +256,7 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
         label: 'Restart at the new size',
         async run(ctx) {
           const w = await workloadOf(ctx);
-          await runtime.rollout({ labels: await labelsOf(ctx), image: w.current.image, instances: w.instances, plan: w.plan, region: w.region, signal: ctx.signal, log: ctx.log });
+          await runtime.rollout({ labels: await labelsOf(ctx), image: w.current.image, instances: w.instances, plan: w.plan, region: w.region, run: w.run, healthCheck: w.healthCheck, signal: ctx.signal, log: ctx.log });
           return {};
         },
       },
@@ -213,7 +265,7 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
         label: 'Check health',
         async run(ctx) {
           const w = await workloadOf(ctx);
-          await runtime.health({ labels: await labelsOf(ctx), path: w.healthCheck?.path ?? null, signal: ctx.signal, log: ctx.log });
+          await runtime.health({ labels: await labelsOf(ctx), path: w.healthCheck?.path ?? null, region: w.region, signal: ctx.signal, log: ctx.log });
           return {};
         },
       },
@@ -226,7 +278,8 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
       key,
       label: stepLabel,
       async run(ctx) {
-        await runtime.setStatus({ labels: await labelsOf(ctx), action, signal: ctx.signal });
+        const w = await workloadOf(ctx);
+        await runtime.setStatus({ labels: await labelsOf(ctx), action, region: w?.region, run: w?.run, plan: w?.plan, signal: ctx.signal });
         return {};
       },
     }],
@@ -242,7 +295,8 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
       key: 'remove',
       label: 'Remove the instances and images',
       async run(ctx) {
-        const removed = await runtime.remove({ labels: await labelsOf(ctx), signal: ctx.signal });
+        const w = await workloadOf(ctx);
+        const removed = await runtime.remove({ labels: await labelsOf(ctx), region: w?.region, signal: ctx.signal });
         await ctx.log(`Removed ${removed} instance${removed === 1 ? '' : 's'}`);
         return {};
       },
@@ -266,7 +320,7 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
       label: 'Run the job',
       async run(ctx) {
         const w = await workloadOf(ctx);
-        const result = await runtime.run({ labels: await labelsOf(ctx), image: w.current.image, command: ctx.input.command ?? w.run?.command ?? null, signal: ctx.signal, log: ctx.log });
+        const result = await runtime.run({ labels: await labelsOf(ctx), image: w.current.image, command: ctx.input.command ?? w.run?.command ?? null, region: w.region, plan: w.plan, run: w.run, signal: ctx.signal, log: ctx.log });
         return { state: result };
       },
     }],
@@ -313,9 +367,10 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
   /** Starts a deploy: its record first, then the operation (create's first deploy or a later one). */
   async function startDeploy(type, tenantId, w, { commit, trigger, actor, message }) {
     const deployId = newId('dep');
-    const sha = commit ?? (w.source?.repo ? mockCommit() : null);
+    // A local site builds for real and reports the commit it built; elsewhere the mock makes one up.
+    const sha = commit ?? (w.source?.repo && !localRuntime?.handles(w.region) ? mockCommit() : null);
     await repos.deploys.write(tenantId, w.name, {
-      id: deployId, commit: sha, message: message ?? (sha ? `Latest on ${w.source.branch}` : `Image ${w.source?.image}`), trigger, by: actor,
+      id: deployId, commit: sha, message: message ?? (w.source?.repo ? `Latest on ${w.source.branch}` : `Image ${w.source?.image}`), trigger, by: actor,
       operation: null, image: null, result: 'queued', createdAt: iso(), startedAt: null, endedAt: null, body: lineOf(`Queued by ${actor?.name ?? 'the platform'} (${trigger})`),
     });
     const operation = await operations.start(type, { resource: resourceOf(tenantId, w.name), tenant: tenantId, input: { deployId, commit: sha, trigger }, person: actor });
@@ -583,8 +638,33 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
 
   return {
     /** hosted.services.platform: what a launcher calls. */
-    services: { workloads, deploys, usage, capacity },
+    services: {
+      workloads: {
+        ...workloads,
+        /** Where a workload's running instances answer: [{ instance, url }] (local sites, spec 8.9 R10). */
+        async endpoints(tenantId, name) {
+          const w = await mustGet(tenantId, name);
+          return localRuntime?.handles(w.region) ? localRuntime.endpoints(tenantId, name) : [];
+        },
+      },
+      deploys,
+      usage,
+      capacity,
+      /** Runtime log lines (spec 8.9 R11): the last ones kept, after a cursor. */
+      logs: {
+        async tail(tenantId, name, { after = 0, limit = 500 } = {}) {
+          await mustGet(tenantId, name);
+          const buf = logBuffers.get(`${tenantId}/${name}`) ?? { seq: 0, lines: [] };
+          const lines = buf.lines.filter((l) => l.seq > after).slice(-Math.min(Math.max(1, limit), LOG_KEEP));
+          return { lines, cursor: buf.seq };
+        },
+      },
+      /** The local sites a launcher may offer as regions. */
+      sites: async () => (local ? (await local.servers.sites()).map((s) => ({ id: s.id, name: s.name, mode: s.mode })) : []),
+    },
     overview,
+    addLocalSite,
+    localRuntime,
     inventory,
     runtime,
     repos,

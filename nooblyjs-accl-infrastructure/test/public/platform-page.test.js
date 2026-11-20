@@ -40,13 +40,13 @@ async function draw(app, person = { id: 'stevie', name: 'Stevie', accessRole: 'O
   };
   await (await found.route.page()).render(view, { params: found.params, query: new URLSearchParams(), ctx, route: found.route });
   controller.abort();
-  return { found, out: view.innerHTML };
+  return { found, out: view.innerHTML, list: view.querySelector('[data-region="list"]')?.innerHTML ?? '', sites: view.querySelector('[data-region="local"]')?.innerHTML ?? '' };
 }
 
 test('the Platform screen lists the seed tenant\'s workloads, read-only', async () => {
   const app = await startApp({ seed: true, platform: { enabled: true } });
   apps.push(app);
-  const { found, out } = await draw(app);
+  const { found, out, list } = await draw(app);
   assert.equal(found.route.nav, 'platform');
   assert.match(out, /<h1 class="page-title">Platform<\/h1>/);
   assert.equal(out.match(/<h1\b/g).length, 1);
@@ -55,7 +55,7 @@ test('the Platform screen lists the seed tenant\'s workloads, read-only', async 
     'Private service', 'Inside the tenant only', 'Static site', 'Files only', 'Schedule 0 2 * * *', 'Last run succeeded', 'Deploying', 'a1f3c9e',
     'af-south-1: 6 instances', 'Shared host VMs arrive with spec 8.2',
   ]) assert.ok(out.includes(escapeHtml(text)), `the screen says "${text}"`);
-  assert.doesNotMatch(out, /<button|<form/, 'nothing to press: read-only');
+  assert.doesNotMatch(list, /<button|<form/, 'nothing to press on workloads: read-only');
   assert.doesNotMatch(out, /style=/);
 });
 
@@ -68,4 +68,26 @@ test('without the platform it says the layer is off; a non-operator sees no work
   const viewer = (await draw(on, { id: 'naledi-k', name: 'Naledi K.', accessRole: 'Viewer' })).out;
   assert.match(viewer, /Operators only/);
   assert.doesNotMatch(viewer, /exclusivity-life/);
+});
+
+test('Sites and servers (spec 8.9.3): the site, its server with facts, warnings and meters, Add server and Remove server', async () => {
+  const app = await startApp({ platform: { enabled: true }, local: { site: { id: 'lan-dev', name: 'Local network' }, agent: 'mock' }, agents: { checkMs: 0 } });
+  apps.push(app);
+  await app.hosted.local.agent.welcome;
+  for (let i = 0; i < 100 && (await app.hosted.local.servers.servers())[0]?.status !== 'online'; i += 1) await new Promise((r) => setTimeout(r, 10));
+  const { sites } = await draw(app);
+  for (const text of [
+    'Sites and servers', 'Local network', 'lan-dev', '1 server · 1 online · binds 127.0.0.1', 'mock-server', 'Online',
+    'Ubuntu 24.04.5 LTS · kernel 6.8.0', '4 CPUs · 8 GB · 40 GB disk free', '29.0.0-mock · cgroup v2', '192.168.1.20',
+    'Warning: Docker runs without user namespaces', '0 of 3.75 vCPU', '0 MB of 7.5 GB', 'Add server', 'Remove server', 'Create site',
+  ]) assert.ok(sites.includes(escapeHtml(text)), `the section says "${text}"`);
+  assert.doesNotMatch(sites, /style=|credential/);
+  assert.match(sites, /role="meter"/);
+});
+
+test('Sites and servers: a non-operator never sees it', async () => {
+  const app = await startApp({ platform: { enabled: true }, local: { site: { id: 'lan-dev' }, agent: 'mock' }, agents: { checkMs: 0 } });
+  apps.push(app);
+  const { out } = await draw(app, { id: 'naledi-k', name: 'Naledi K.', accessRole: 'Viewer' });
+  assert.doesNotMatch(out, /Sites and servers|lan-dev/);
 });

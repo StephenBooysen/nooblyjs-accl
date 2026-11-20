@@ -14,6 +14,10 @@
 // records are kept in memory, and appended under rootDir when `persist` is set. Takes the launcher's `express`, so
 // it works the same on Express 4 and 5.
 import crypto from 'node:crypto';
+import { createUpgradeRouter } from './upgrades.js';
+
+/** For launchers that build their own host: host.onUpgrade and attach(server) (spec 8.9). */
+export { createUpgradeRouter };
 import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
 
@@ -150,9 +154,13 @@ export function createStandaloneHost({ express, rootDir, people = PEOPLE, servic
     sendError(res, 403, 'csrf', 'The form expired. Reload the page and try again.');
   }
 
+  const upgrades = createUpgradeRouter();
+
   return {
     auditLog,
     eventLog,
+    /** Passes the launcher's HTTP server's WebSocket upgrades to what accelerators registered with host.onUpgrade. */
+    attachUpgrades: (server) => upgrades.attach(server),
     events,
     people,
     can,
@@ -176,6 +184,7 @@ export function createStandaloneHost({ express, rootDir, people = PEOPLE, servic
         clock: { now: () => Date.now() },
         development: true,
         checksCsrf: true,
+        onUpgrade: (path, handler) => upgrades.onUpgrade(path, handler),
       };
     },
   };
@@ -236,6 +245,7 @@ export function createDevLauncher({ express, rootDir, log = console, people = PE
     shell,
     mount,
     hostFor: (dataDir) => stand.hostFor(dataDir),
+    attachUpgrades: (server) => stand.attachUpgrades(server),
     /** Puts an accelerator whose mount() succeeded on the rail. */
     add: (hosted, mountPath) => shell.add(hosted, { name: hosted.name, mountPath }),
   };

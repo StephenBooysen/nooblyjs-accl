@@ -1,9 +1,10 @@
-// Platform (spec 8.1, R8; no mockup yet, so kit components only): every tenant of the hosting launcher (NooblyJS Cloud's
+// Platform (spec 8.1, R8; spec 8.9's Sites and servers in platform-sites.js; no mockup yet, so kit components only): every tenant of the hosting launcher (NooblyJS Cloud's
 // workspaces) and its workloads, read-only, for operators (change-guardrails). Tenants never see this screen; the
 // launcher shows them their own workloads. Data: GET /platform (404 when the launcher has not turned the platform on).
 import { pageHead, notice, statusPill, dataTable, card } from '/ui/js/components/index.js';
 import { ago } from '/ui/js/format.js';
-import { html, errorCard, isAbort, reloadable, progressBar, REFRESH_MS } from '../lib.js';
+import { html, errorCard, isAbort, reloadable, progressBar, messageRegion, REFRESH_MS } from '../lib.js';
+import { renderSites } from './platform-sites.js';
 
 const plural = (n, one) => `${n} ${n === 1 ? one : `${one}s`}`;
 const KIND = { service: 'Web service', private: 'Private service', worker: 'Worker', job: 'Job', static: 'Static site' };
@@ -45,8 +46,11 @@ export async function render(view, { ctx }) {
     return;
   }
   view.innerHTML = String(html`${pageHead({ title: 'Platform', lead: 'Hosted workloads across tenants. Read-only: tenants change their own through the hosting product.' })}
-    <div data-region="list"></div>`);
+    ${messageRegion()}
+    <div data-region="list"></div>
+    <div data-region="local"></div>`);
   const list = view.querySelector('[data-region="list"]');
+  const sites = renderSites(view, view.querySelector('[data-region="local"]'), ctx).catch(() => {});
   const lead = view.querySelector('.page-head .lead');
 
   await reloadable(list, ctx, async () => {
@@ -76,4 +80,5 @@ export async function render(view, { ctx }) {
   })}`);
     return tenants.some((t) => t.counts.deploying || t.counts.deleting) ? REFRESH_MS : 0;
   });
+  await sites;
 }
