@@ -6,6 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { startApp } from './helpers.js';
+import { startMockAgent } from '../agent/mock.js';
 
 const TENANT = 'acme';
 const actor = { id: 'stevie', name: 'Stevie', kind: 'person' };
@@ -29,7 +30,7 @@ async function start() {
   const resolved = [];
   const app = await startApp({
     platform: { enabled: true, resolveSecrets: async (tenantId, refs) => { resolved.push({ tenantId, refs }); return Object.fromEntries(refs.map((r) => [r, 'hi there'])); } },
-    local: { site: { id: 'lan-dev', name: 'Local network' }, agent: 'mock' },
+    local: { site: { id: 'lan-dev', name: 'Local network' }, agent: 'mock', drainMs: 100 },
     agents: { checkMs: 0 },
   });
   await app.hosted.local.agent.welcome;
@@ -102,9 +103,18 @@ test('local site: a redeploy replaces the instances; a failed deploy keeps the o
     await app.hosted.idle();
     const first = docker.state.containers.map((c) => c.name);
 
+    // The launcher hears the new endpoints while the old instance still runs (then it drains and goes).
+    const heard = [];
+    app.eventEmitter.on('infrastructure.workload.endpoints', async (e) => {
+      heard.push({ ...e, running: docker.state.containers.map((c) => c.name), endpoints: (await platform.workloads.endpoints(TENANT, 'hello')).map((x) => x.instance) });
+    });
     await platform.workloads.deploy(TENANT, 'hello', { actor });
     await app.hosted.idle();
     const second = docker.state.containers.map((c) => c.name);
+    const switched = heard.find((h) => h.endpoints.length && !h.endpoints.includes(first[0]));
+    assert.ok(switched, 'an endpoints event after the switch');
+    assert.deepEqual([switched.tenantId, switched.workload], [TENANT, 'hello']);
+    assert.ok(switched.running.includes(first[0]), 'the old instance was still running when the launcher heard');
     assert.equal(second.length, 1);
     assert.notDeepEqual(second, first, 'new instances replaced the old');
 
@@ -150,7 +160,7 @@ test('local site: a site does not grow; delete removes the containers', async ()
     await platform.workloads.remove(TENANT, 'hello', { actor });
     await app.hosted.idle();
     assert.equal(docker.state.containers.length, 0);
-    assert.deepEqual(await app.hosted.platform?.localRuntime?.list?.() ?? [], []);
+    assert.deepEqual(await app.hosted.local.runtime.list(), []);
   } finally {
     await app.close();
   }
@@ -166,6 +176,105 @@ test('local servers: a used token cannot enrol again; a removed server is refuse
     assert.equal((await servers.verify({ type: 'hello', server: enrolled.server, credential: enrolled.credential })).server, enrolled.server);
     await servers.remove(enrolled.server);
     await assert.rejects(servers.verify({ type: 'hello', server: enrolled.server, credential: enrolled.credential }), /Unknown server/);
+  } finally {
+    await app.close();
+  }
+});
+
+/** A second server in lan-dev, enrolled with a token; `docker` keeps its containers across reconnects. */
+async function addServer(app, { hostname, memoryMb = 16_384 }) {
+  const { token } = await app.hosted.local.servers.createEnrolment('lan-dev');
+  const agent = startMockAgent({ identity: { token }, facts: { hostname, memoryMb } });
+  app.hosted.agents.attach(agent.transport, { address: '192.168.1.30' });
+  const w = await agent.welcome;
+  assert.ok(await until(async () => (await app.hosted.local.servers.server(w.server))?.allocatable && app.hosted.agents.isOnline(w.server)));
+  return { id: w.server, credential: w.credential, docker: agent.docker };
+}
+
+test('8.9.7 a lost server: its instance gets no traffic, moves after the wait, and its leftover is removed when it returns', async () => {
+  const { app, platform, docker: devDocker } = await start();
+  const runtime = app.hosted.local.runtime;
+  const moves = [];
+  app.eventEmitter.on('infrastructure.workload.instances', (c) => moves.push(c));
+  try {
+    // The bigger server takes the instance (most free memory first).
+    const big = await addServer(app, { hostname: 'rack-2' });
+    await platform.workloads.create(TENANT, spec({ instances: 1 }), { actor });
+    await app.hosted.idle();
+    const [first] = await runtime.list();
+    assert.equal(first.server, big.id);
+    assert.equal(first.run.env[0].secretRef, 'hero:svc:1:GREETING', 'the record keeps the secret ref, never its value');
+    assert.ok(!JSON.stringify(await runtime.list()).includes('hi there'));
+
+    // rack-2 drops: the instance is unknown at once and leaves the endpoints.
+    app.hosted.agents.disconnect(big.id, 'Network cable (test).', { retry: true });
+    assert.ok(await until(async () => (await runtime.list())[0]?.status === 'unknown'));
+    assert.deepEqual(await platform.workloads.endpoints(TENANT, 'hello'), []);
+    assert.ok(moves.some((m) => m.change === 'unknown' && m.instance === first.name));
+
+    // Not before the wait.
+    assert.deepEqual(await runtime.replaceLost({ afterMs: 60_000 }), { moved: [], stuck: [] });
+    assert.equal(devDocker.state.containers.length, 0);
+
+    // After it: built again on the development server (from the recorded commit), started, checked, serving.
+    const { moved } = await runtime.replaceLost({ afterMs: 0 });
+    assert.equal(moved.length, 1);
+    assert.equal(devDocker.state.containers.length, 1);
+    assert.ok(devDocker.state.images.includes(first.image), 'the image was built on the new server');
+    const [now] = await runtime.list();
+    assert.equal(now.status, 'running');
+    assert.notEqual(now.server, big.id);
+    assert.deepEqual(devDocker.state.containers[0].args.env, [{ key: 'GREETING', value: 'hi there' }, { key: 'PORT', value: '10400' }]);
+    assert.equal((await platform.workloads.endpoints(TENANT, 'hello')).length, 1);
+    assert.ok(moves.some((m) => m.change === 'moved' && m.to === now.server));
+    assert.ok((await platform.logs.tail(TENANT, 'hello')).lines.some((l) => /\[noobly\] Moved to mock-server/.test(l.line)));
+
+    // rack-2 returns with the old container still running: it is removed; the moved instance stays.
+    assert.equal(big.docker.state.containers.length, 1);
+    const back = startMockAgent({ identity: { server: big.id, credential: big.credential }, docker: big.docker });
+    app.hosted.agents.attach(back.transport, { address: '192.168.1.30' });
+    await back.welcome;
+    assert.ok(await until(() => big.docker.state.containers.length === 0), 'the leftover is removed');
+    assert.deepEqual((await runtime.list()).map((i) => i.name), [now.name]);
+  } finally {
+    await app.close();
+  }
+});
+
+test('8.9.7 a server back within the wait keeps its instances; with no room elsewhere they stay unknown and it is said once', async () => {
+  const { app, platform } = await start();
+  const runtime = app.hosted.local.runtime;
+  const moves = [];
+  app.eventEmitter.on('infrastructure.workload.instances', (c) => moves.push(c));
+  try {
+    const big = await addServer(app, { hostname: 'rack-2' });
+    // 9 GB fits only on rack-2 (the development server has 7.5 GB allocatable).
+    await platform.workloads.create(TENANT, spec({ instances: 1, plan: { cpu: 0.5, memoryMb: 9216 } }), { actor });
+    await app.hosted.idle();
+    const [inst] = await runtime.list();
+    assert.equal(inst.server, big.id);
+
+    app.hosted.agents.disconnect(big.id, 'Blip (test).', { retry: true });
+    assert.ok(await until(async () => (await runtime.list())[0]?.status === 'unknown'));
+
+    // No room elsewhere: it stays unknown, and the reason is reported once however often the job runs.
+    for (let n = 0; n < 3; n += 1) {
+      const r = await runtime.replaceLost({ afterMs: 0 });
+      assert.equal(r.stuck.length, 1);
+      assert.match(r.stuck[0].reason, /Site Local network is full/);
+    }
+    assert.equal(moves.filter((m) => m.change === 'stuck').length, 1, JSON.stringify(moves));
+    assert.equal((await runtime.list())[0].status, 'unknown');
+
+    // It comes back with the container still running: it serves again, as it was.
+    const back = startMockAgent({ identity: { server: big.id, credential: big.credential }, docker: big.docker });
+    app.hosted.agents.attach(back.transport, { address: '192.168.1.30' });
+    await back.welcome;
+    assert.ok(await until(async () => (await runtime.list())[0]?.status === 'running'));
+    assert.equal((await runtime.list())[0].name, inst.name);
+    assert.equal(big.docker.state.containers.length, 1);
+    assert.equal((await platform.workloads.endpoints(TENANT, 'hello')).length, 1);
+    assert.ok(moves.some((m) => m.change === 'back'));
   } finally {
     await app.close();
   }

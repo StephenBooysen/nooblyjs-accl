@@ -5,7 +5,7 @@ import { CloudError } from './errors.js';
 import { checkProvider } from './contract.js';
 import { MockCloud } from './mock/cloud.js';
 
-export const PROVIDER_LABEL = { mock: 'mock cloud', gcp: 'Google Cloud', aws: 'AWS' };
+export const PROVIDER_LABEL = { mock: 'mock cloud', gcp: 'Google Cloud', aws: 'AWS', local: 'local servers' };
 
 /**
  * @param {object} o
@@ -19,6 +19,8 @@ export const PROVIDER_LABEL = { mock: 'mock cloud', gcp: 'Google Cloud', aws: 'A
 export function createProviders({ enabled, store, secrets, catalog, mockStepMs = 1200, now = () => Date.now() }) {
   const instances = new Map();
   const mockClouds = new Map();
+  /** (siteId) => provider, set by mount() when local servers are on (spec 8.9.4). */
+  let localFactory = null;
 
   function mockCloud(account) {
     if (!mockClouds.has(account.id)) {
@@ -28,6 +30,7 @@ export function createProviders({ enabled, store, secrets, catalog, mockStepMs =
   }
 
   async function build(account, credentials) {
+    if (account.provider === 'local' && localFactory) return localFactory(account.region ?? account.site);
     if (account.provider === 'mock') {
       const { createMockProvider } = await import('./mock/index.js');
       return createMockProvider({ account, credentials, cloud: mockCloud(account), catalog: catalog.forCloud(account.cloud) });
@@ -45,7 +48,7 @@ export function createProviders({ enabled, store, secrets, catalog, mockStepMs =
     },
     /** The provider for an account (cached). Throws a CloudError when this install can't serve it. */
     async forAccount(account) {
-      if (!enabled.includes(account.provider)) {
+      if (!enabled.includes(account.provider) && !(account.provider === 'local' && localFactory)) {
         throw new CloudError('unavailable', `This install doesn't use the ${PROVIDER_LABEL[account.provider] ?? account.provider} provider (INFRA_PROVIDERS).`);
       }
       const key = `${account.id}|${account.provider}|${account.credentialRef ?? ''}`;
@@ -54,6 +57,10 @@ export function createProviders({ enabled, store, secrets, catalog, mockStepMs =
         instances.set(key, checkProvider(await build(account, credentials)));
       }
       return instances.get(key);
+    },
+    /** Local sites as a provider: `factory(siteId)` builds one (spec 8.9.4). */
+    useLocal(factory) {
+      localFactory = factory;
     },
     /** Drops an account's provider (its credentials changed, or it was removed). */
     forget(accountId) {

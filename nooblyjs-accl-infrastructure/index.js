@@ -31,6 +31,9 @@ import { createPlatform } from './src/platform/index.js';
 import { spawn } from 'node:child_process';
 import { createAgentHub } from './src/services/agents.js';
 import { createLocalServers } from './src/platform/local.js';
+import { REPLACE_AFTER_MS } from './src/platform/runtime-local.js';
+import { createLocalProvider } from './src/providers/local/index.js';
+import { checkProvider } from './src/providers/contract.js';
 import { startMockAgent } from './agent/mock.js';
 import { agentFileRoutes, AGENT_PUBLIC } from './src/routes/agent-files.js';
 
@@ -156,7 +159,10 @@ export async function mount(app, eventEmitter, serviceRegistry, {
       log.info(`agent ${server} ${status}`);
       if (!localServers || stopping) return;
       localServers.markStatus(server, status === 'online' ? 'online' : 'offline')
-        .then((s) => { if (s && status === 'online') return platform?.localRuntime?.serverOnline(server); })
+        .then((s) => {
+          if (!s) return null;
+          return status === 'online' ? platform?.localRuntime?.serverOnline(server) : platform?.localRuntime?.serverOffline(server);
+        })
         .catch((err) => log.warn(`server ${server}: ${err.message}`));
       try {
         eventEmitter.emit('infrastructure.server.status', { server, status });
@@ -171,11 +177,16 @@ export async function mount(app, eventEmitter, serviceRegistry, {
   platform = platformOn
     ? createPlatform({
       store: host.store, host, operations, config, catalog, log, now, mockStepMs, workloadsPerTenant: envNumber('INFRA_WORKLOADS_PER_TENANT', 100),
-      local: localServers ? { servers: localServers, hub: agents } : null,
+      local: localServers ? { servers: localServers, hub: agents, statsEveryS: localOption.statsEveryS, drainMs: localOption.drainMs } : null,
       resolveSecrets: platformOption.resolveSecrets,
       emitRaw: (type, payload) => eventEmitter.emit(type, payload),
     })
     : null;
+  // Spec 8.9.4: a local site through the provider contract (its servers as VMs, metrics from the agent's stats).
+  const localProvider = localServers && agents
+    ? (site) => checkProvider(createLocalProvider({ site, servers: localServers, hub: agents, runtime: platform?.localRuntime ?? null }))
+    : null;
+  if (localProvider) providers.useLocal(localProvider);
   const jobs = createJobs({
     now,
     log,
@@ -185,6 +196,8 @@ export async function mount(app, eventEmitter, serviceRegistry, {
       { name: 'inventory', every: () => sync.every(), run: () => sync.inventory() },
       { name: 'cost-snapshot', every: 60 * 60_000, run: () => cost.accrue() },
       ...(platform ? [{ name: 'platform-inventory', every: () => sync.every(), run: () => platform.inventory() }] : []),
+      // Spec 8.9 R7: instances on a server offline for 5 minutes start again elsewhere in its site.
+      ...(platform?.localRuntime ? [{ name: 'local-replace', every: localOption.replaceEveryMs ?? 30_000, run: () => platform.localRuntime.replaceLost({ afterMs: localOption.replaceAfterMs ?? REPLACE_AFTER_MS }) }] : []),
     ],
   });
 
@@ -279,7 +292,7 @@ export async function mount(app, eventEmitter, serviceRegistry, {
     /** The local servers' agent channel (spec 8.9), or null when the launcher cannot pass upgrades. */
     agents,
     /** Local servers (spec 8.9): their records and the development agent, when on. */
-    local: localServers ? { servers: localServers, get agent() { return localAgent; } } : null,
+    local: localServers ? { servers: localServers, runtime: platform?.localRuntime ?? null, provider: localProvider, get agent() { return localAgent; } } : null,
     /** For the tests: resolves when no operation is queued or running. */
     idle: () => operations.idle(),
     /** For the tests and a person in a hurry: run a job now ('account-check', 'inventory'). */
@@ -302,9 +315,19 @@ export async function mount(app, eventEmitter, serviceRegistry, {
 async function startLocalAgent({ kind, site, controller, dataDir, localServers, agents, log }) {
   if (kind === 'mock') {
     const { token } = await localServers.createEnrolment(site, { by: 'development' });
-    const agent = startMockAgent({ identity: { token } });
+    let agent = startMockAgent({ identity: { token } });
     agents.attach(agent.transport, { address: '127.0.0.1' });
-    return { kind, docker: agent.docker, welcome: agent.welcome, stop: () => agent.session.stop() };
+    const first = await agent.welcome;
+    return {
+      kind, docker: agent.docker, welcome: Promise.resolve(first), server: first.server,
+      stop: () => agent.session.stop(),
+      /** Tests: the same server dialling again with its credential, its containers intact (after a disconnect). */
+      async reconnect() {
+        agent = startMockAgent({ identity: { server: first.server, credential: first.credential }, docker: agent.docker });
+        agents.attach(agent.transport, { address: '127.0.0.1' });
+        return agent.welcome;
+      },
+    };
   }
   if (kind !== 'fork') throw new Error(`local.agent is 'fork', 'mock' or nothing, not ${JSON.stringify(kind)}.`);
   if (!controller) throw new Error('local.controller (this launcher\'s own URL, such as http://127.0.0.1:11010) is needed to fork the agent.');
