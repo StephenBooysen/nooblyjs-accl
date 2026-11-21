@@ -5,6 +5,7 @@ import { pageHead, notice, statusPill, dataTable, card } from '/ui/js/components
 import { ago } from '/ui/js/format.js';
 import { html, errorCard, isAbort, reloadable, progressBar, messageRegion, REFRESH_MS } from '../lib.js';
 import { renderSites } from './platform-sites.js';
+import { renderPools } from './platform-pools.js';
 
 const plural = (n, one) => `${n} ${n === 1 ? one : `${one}s`}`;
 const KIND = { service: 'Web service', private: 'Private service', worker: 'Worker', job: 'Job', static: 'Static site' };
@@ -48,8 +49,10 @@ export async function render(view, { ctx }) {
   view.innerHTML = String(html`${pageHead({ title: 'Platform', lead: 'Hosted workloads across tenants. Read-only: tenants change their own through the hosting product.' })}
     ${messageRegion()}
     <div data-region="list"></div>
+    <div data-region="pools"></div>
     <div data-region="local"></div>`);
   const list = view.querySelector('[data-region="list"]');
+  const pools = renderPools(view, view.querySelector('[data-region="pools"]'), ctx).catch(() => {});
   const sites = renderSites(view, view.querySelector('[data-region="local"]'), ctx).catch(() => {});
   const lead = view.querySelector('.page-head .lead');
 
@@ -76,9 +79,9 @@ export async function render(view, { ctx }) {
       ${card({
     label: 'Capacity',
     title: 'Capacity',
-    body: html`${capacity.regions.length ? html`<ul class="inf-links">${capacity.regions.map((r) => html`<li>${r.region}: ${plural(r.instances, 'instance')} reserving ${r.reserved.cpu} vCPU · ${memory(r.reserved.memoryMb)}</li>`)}</ul>` : ''}<p class="inf-muted">${capacity.note}</p>`,
+    body: html`${capacity.regions.length ? html`<ul class="inf-links">${capacity.regions.map((r) => html`<li>${r.region}: ${plural(r.instances, 'instance')} reserving ${r.reserved.cpu} vCPU · ${memory(r.reserved.memoryMb)}${r.allocatable ? ` of ${r.allocatable.cpu} vCPU · ${memory(r.allocatable.memoryMb)} on ${plural(r.online, 'host')} online` : ''}</li>`)}</ul>` : ''}<p class="inf-muted">${capacity.note}</p>`,
   })}`);
     return tenants.some((t) => t.counts.deploying || t.counts.deleting) ? REFRESH_MS : 0;
   });
-  await sites;
+  await Promise.all([pools, sites]);
 }

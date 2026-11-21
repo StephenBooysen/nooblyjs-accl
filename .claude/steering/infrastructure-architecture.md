@@ -48,13 +48,13 @@ flowchart TB
   SVC --> REC
   SVC --> PROV
   OPS --> RUN
-  PROV -->|cloud SDKs| CLOUD["GCP / AWS"]
+  PROV -->|HTTPS APIs| CLOUD["GCP / AWS"]
   RUN -->|SSH| VM["VM: Docker + Caddy (HTTPS)"]
 ```
 
 Three rules hold everywhere:
 
-1. **Services never call a cloud SDK directly.** They call a provider adapter (§6). `mock` is always available; tests
+1. **Services never call a cloud API directly.** They call a provider adapter (§6). `mock` is always available; tests
    and the seed story run on it.
 2. **Anything that takes longer than a request is an operation** (§7): queued, stepped, resumable, and visible live.
 3. **Pages never call a cloud.** They read records through the API; records are kept current by operations and sync
@@ -71,8 +71,8 @@ Three rules hold everywhere:
 | Records | `host.store` (nooblyjs-core `FsStore`: Markdown with YAML front matter, YAML, atomic writes, per-path locks) | Under `<dataDir>/infrastructure/`. |
 | Queue, logging, caching, scheduling | nooblyjs-core services via `serviceRegistry`, instances named `infrastructure` | Never our own copies. |
 | Secrets | AES-256-GCM files under `<dataDir>/secrets/`, behind `src/services/secrets.js` | Swappable for GCP Secret Manager / AWS Secrets Manager (§10). Not the nooblyjs-core settings service: it mounts an HTTP API that reveals values. |
-| GCP | `@google-cloud/compute`, `@google-cloud/storage`, `@google-cloud/monitoring`, `googleapis` (Cloud SQL Admin) | Loaded lazily (`await import`) so mock-only installs and tests need none of them. |
-| AWS | AWS SDK v3: `client-ec2`, `client-rds`, `client-s3`, `s3-request-presigner`, `client-iam`, `client-cloudwatch`, `client-sts`, `client-ssm` | Same, lazily. |
+| GCP | Google's REST APIs over `fetch` (Compute Engine, Cloud Monitoring, Artifact Registry, IAM Credentials; Cloud SQL Admin and Cloud Storage when phase 4 needs them), with a service account JWT signed by `node:crypto` (`src/providers/http/google-auth.js`) | No SDK (D3, 2026-11-21). Loaded lazily (`await import`). |
+| AWS | AWS's Query and JSON APIs over `fetch` (EC2, STS, SSM, CloudWatch, ECR; RDS, S3 and IAM when phase 4 needs them), signed with SigV4 by `node:crypto` (`src/providers/http/sigv4.js`, checked against AWS's published example) | No SDK (D3, 2026-11-21). Same, lazily. |
 | Git | GitHub and GitLab REST APIs over `fetch`, authenticated with a personal access token | No SDK. |
 | MongoDB | MongoDB Community packages installed **on the database VM**; administered with `mongosh` over SSH | The server needs no MongoDB driver. |
 | Remote execution | `ssh2` (SSH + SFTP) | §9. |
@@ -301,6 +301,21 @@ engine stores in the operation record before waiting on it, so a restart resumes
 Every resource is **tagged on creation** and every list/sync call **filters by `noobly-install`**, so the accelerator
 never shows or touches what it did not create (product.md §10).
 
+**As built (2026-11-21, roadmap 2.8–2.10 and 8.3.3, against fakes).** `src/providers/gcp/index.js` and
+`src/providers/aws/index.js` implement the contract and the registry area. GCP refs are paths
+(`zones/<z>/instances/<name>`, `regions/<r>/addresses/<name>`); the network ref is the region's subnetwork
+`noobly-cloud`, 10.<128+i>.0.0/20, where i is the region's place in the catalogue. Each firewall port is its own rule,
+`noobly-<vm>-<port>`, aimed at the tag `noobly-<vm>`. A GCP network carries no labels, so it is found by its name. AWS
+refs carry their region (`af-south-1/i-…`). ensureNetwork completes whatever is missing: the VPC 10.<128+i>.0.0/16 with
+DNS hostnames, the internet gateway, the default route and a /20 subnet per zone. It runs synchronously, so operation
+is null. AWS's waitFor associates the Elastic IP once a launch is running, and deletes the security group once the
+instance has terminated. Registry: Artifact Registry (`<region>-docker.pkg.dev/<project>/<repo>/<tenant>/<workload>`)
+and ECR. ECR keeps one repository per image, so builders call the optional `registry.prepare(ref)` before a push. Pulls
+use a separate read-only identity: GCP's `noobly-pull` service account (a minted token) and AWS's `noobly-pull` role
+(assumed from `noobly-cloud`). The access each needs is in `docs/least-privilege.md`. Data disks and resize are not in
+the contract yet, because nothing calls them; they arrive with the phase that does. Not yet run against a real project
+or account.
+
 **Databases stay in their cloud.** `allowVms` may only name VMs in the database's account (and, on AWS, its region,
 since the VPC is regional; a GCP VPC spans regions). The API refuses anything else with a 422, and so does linking an
 app to a database in another account. Nothing in v1 opens a database to the internet or to another cloud.
@@ -363,9 +378,9 @@ by `close()`):
 | --- | --- | --- |
 | Account check | 15 min | `account.verify()`; sets Connected / Needs attention (sidebar card). |
 | Inventory sync | 60 s while any resource is transitional, else 5 min | Lists tagged resources per account; updates `observed`; marks records whose resource is gone as `Missing in cloud`; never deletes a record by itself. |
-| DNS check | 60 s for pending domain endpoints | Resolves the person's domain (public resolvers) and compares it to the VM's static IP (or, on AWS, its public DNS name); flips `Waiting for DNS record` → `Verified`, then Caddy gets the certificate. |
+| DNS check | 60 s while a domain endpoint waits, else 15 min | Resolves the person's domain (public resolvers 1.1.1.1 and 8.8.8.8, or `INFRA_DNS_SERVERS`; the mock DNS for mock accounts) and compares it to the VM's static IP (a CNAME to the AWS public DNS name resolves to it); flips `Waiting for DNS record` → `Verified`, then Caddy gets the certificate. |
 | MongoDB backup status | 15 min | Reads the last backup's result from each database VM; marks a missed or failed backup. |
-| Certificate check | 12 h | Reads expiry from Caddy on each VM; flags anything renewing within 7 days that hasn't renewed. |
+| Certificate check | 60 s while a certificate is pending, else 6 h | Reads what Caddy holds on each running VM with endpoints (`caddy-certs`): Let's Encrypt `Pending` → `Valid` with its expiry; `Failed` when still missing an hour after the DNS was verified (Caddy keeps trying); uploaded certificates go `Expired` on their date. |
 | Bucket stats | 60 min | Bytes and object counts (GCS: Monitoring `storage/total_bytes`; S3: CloudWatch `BucketSizeBytes`/`NumberOfObjects`), falls back to listing for small buckets. |
 | Cost snapshot | 60 min | Adds the hour's estimated cost per resource to the month's tally (§12). From roadmap phase 2, when VMs start and stop. |
 
@@ -386,13 +401,13 @@ closed when idle. *Alternative (open decision O4): a small agent on the VM that 
 inbound SSH is needed.*
 
 **No shell interpolation of user input.** Remote work runs fixed scripts from `src/remote/scripts/`, piped over
-stdin to `bash -s` (nothing is left on the VM and no SFTP is needed); the VM's host key is pinned the first time and
+stdin to `bash -s` (nothing is left on the VM); files a script needs (site files, uploaded certificates) go over SFTP to `~/.noobly/<name>` first and the script moves them into place; the VM's host key is pinned the first time and
 checked every time after. Arguments are validated (repo URL `https://` or `git@host:path`, never starting with `-`; branch passes
 `git check-ref-format`; names match §5; env keys `^[A-Z_][A-Z0-9_]*$`) and passed as positional arguments with
 `shell-quote`-style escaping; environment values are written to `/srv/apps/<app>/.env` (mode 0600) over SFTP and given
 to Docker with `--env-file`, never placed on a command line.
 
-**Endpoints.** One Caddy site file per endpoint: `host { reverse_proxy 127.0.0.1:<port> }`.
+**Endpoints.** One Caddy site file per address, `/etc/caddy/sites/<host>.caddy`, rendered by `src/remote/caddy.js`: each endpoint on the address is a `handle_path /<path>/*` (longest first) or the `handle` for `/`, with `reverse_proxy 127.0.0.1:<port>`; endpoints on one address share its certificate and its HTTP setting. `caddy-site.sh` installs a file, runs `caddy validate`, and puts the old one back if Caddy refuses it (the endpoint is then *Failed*, and a failed change is undone). Ports 80 and 443 open with the first endpoint and close with the last (`endpoint.add`, `endpoint.change`, `endpoint.remove`; `vm.launch` step 3 for one asked for at launch).
 
 - **The cloud's address** (no DNS to manage): on AWS the VM's public DNS name, on GCP its static IP. Caddy serves it
   on HTTP and on HTTPS with `tls internal` (its own local CA, so browsers warn). Public CAs won't help here: Let's
@@ -428,6 +443,24 @@ branch, and enqueues `app.deploy` with `trigger: push`. Needs the server reachab
 **Linked env vars.** `{ key, link: { database } }` resolves at deploy time to the database's connection string (from
 secrets; the database must be in the app's VM's account, and linking adds that VM to `allowVms`); `{ key, link: { bucket } }` to the bucket name plus the grant's credentials (`<KEY>`, `<KEY>_ACCESS_KEY`,
 `<KEY>_SECRET_KEY`, `<KEY>_ENDPOINT`). Values reach the VM only, never the browser.
+
+**As built (2026-11-21, roadmap phase 6).** `src/services/apps.js` and `src/services/git.js`, with the scripts
+`app-clone`, `app-build`, `app-env`, `app-run`, `app-health` and `app-containers` in `src/remote/scripts/`:
+
+- `app.deploy` runs on the **VM** as its resource (so a deploy never races the VM's endpoint changes for Caddy) and
+  names the app in `input.app`. Its nine steps: check the source, clone, build, write the environment, start beside
+  the old container, check health, go live on HTTPS, stop the previous version, prune. Images are
+  `noobly-app/<app>:<sha12>`, containers `<app>-<sha7>-<deploy>`, labelled `noobly-app=<app>`; the host port is the
+  first free one in 30000–39999 on 127.0.0.1. An endpoint keeps the app's own `port` and gets `upstreamPort` (the
+  new container's), so the "Routes to" column still says the container port. An app's existing endpoint (added on the
+  VM's page) follows each deploy too. A worker with no health check must keep running for 10 seconds.
+- Each deploy is a record, `apps/<app>/deploys/<id>.md`, whose body is the operation's log (build output arrives in
+  batches of lines, each timestamped). A failed deploy keeps the app Live when a version was already serving, else
+  Failed. A job reads each live app's container every 5 minutes: one that stopped is **Crashed** until it runs again.
+- The webhook route sits in the accelerator's router ahead of `/api/v1` and answers on the signature alone. A launcher
+  that gates its mount lets POSTs under `publicPostPrefixes` (`/hooks/git/`) through, as hero-co does.
+- Tokens starting `mock_` (and, in development and tests, public repositories the mock knows) talk to the mock Git
+  host, which signs pushes as GitHub and GitLab do; the mock VM clones, builds and runs from it.
 
 **VM health.** CPU from the cloud's monitoring; memory and disk from `free -b` and `df -B1 /` over SSH; requests per
 24 h and 2xx/3xx share from Caddy's JSON access log (`/var/log/caddy/access.log`), summarised on the VM by a script.
@@ -610,7 +643,9 @@ Deletes take `{ confirm: "<name>" }` in the body and refuse without it (the API,
 - **`node:test`, offline, on the mock provider** (`npm test`). The seeded stand-in host (`test/fixtures/host.js`) and
   helpers (`startApp`, `t.get(…, { as: 'stevie' })`) stay.
 - **Contract suite** (`test/providers/contract.test.js`): one set of tests every provider must pass. Always runs
-  against `mock`; runs against `gcp`/`aws` when `INFRA_CLOUD_TESTS=gcp,aws` and sandbox credentials are set. Real-cloud
+  against `mock`. The GCP and AWS adapters run the same life against fakes of the clouds' APIs (`test/fixtures/fake-gcp.js`
+  checks the JWT's signature; `fake-aws.js` recomputes every SigV4 signature). The contract suite runs against `gcp`/`aws`
+  when `INFRA_CLOUD_TESTS=gcp,aws` and sandbox credentials are set (not yet wired). Real-cloud
   runs label everything `noobly-test=<run id>` and delete it in `after`, plus a sweeper script for leftovers.
 - **Operations**: each step type runs to success; crash-and-recover at every step (kill between steps, call
   `recover()`, assert no duplicate cloud resource); cancel; failure injection; one-at-a-time per resource.
@@ -652,9 +687,12 @@ Deletes take `{ confirm: "<name>" }` in the body and refuse without it (the API,
   error shape, live redraw). Replace its domain. The entry point itself is now `mount()` (O8, 2026-11-19).
 - **D2 No React, no build.** Native ES modules and the NooblyJS UI kit; pure logic shared by browser and server lives
   in `public/js/shared/`.
-- **D3 Cloud SDKs, not Terraform/Pulumi.** The product exposes a small, fixed set of resources with per-step progress
-  and per-resource actions (start, stop, back up, resize); imperative calls behind an adapter give that directly, with
-  no state file to store and lock. Labels plus records are the state.
+- **D3 Imperative cloud calls, not Terraform/Pulumi.** The product exposes a small, fixed set of resources with
+  per-step progress and per-resource actions (start, stop, back up, resize); imperative calls behind an adapter give
+  that directly, with no state file to store and lock. Labels plus records are the state. *Amended 2026-11-21:* the
+  calls go to the clouds' HTTPS APIs over `fetch`, signed with `node:crypto` (a service account JWT; SigV4), not
+  through the SDKs. The two adapters use a few dozen calls between them; the SDKs would add tens of megabytes of
+  dependencies to every install, including mock-only ones; and a fake HTTP server tests the requests we actually send.
 - **D4 Caddy on each VM** for TLS (automatic Let's Encrypt issuance and renewal for domains, `tls internal` for the
   cloud's address) and routing to containers.
 - **D5 SSH control channel** with a per-install key for first-boot checks, deploys, health and certificate reads.

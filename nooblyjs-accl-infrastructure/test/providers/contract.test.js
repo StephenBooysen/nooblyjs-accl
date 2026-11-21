@@ -1,5 +1,6 @@
-// The provider contract (architecture.md §6.1). Every provider must pass this suite; it always runs against the mock,
-// and will run against GCP and AWS sandbox accounts with INFRA_CLOUD_TESTS=gcp,aws once those adapters exist (phase 2).
+// The provider contract (architecture.md §6.1). Every provider must pass this suite; it always runs against the mock.
+// The GCP and AWS adapters run the same life against fakes of their APIs (gcp.test.js, aws.test.js); a run against
+// sandbox accounts (INFRA_CLOUD_TESTS=gcp,aws) is roadmap 2.8/2.9's open half.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -162,7 +163,7 @@ test('mock: credentials that are missing or refused fail verify, in words', asyn
   }
 });
 
-test('the registry: one instance per account and credentials, the real providers say when they arrive, and the contract is enforced', async () => {
+test('the registry: one instance per account and credentials, the real providers read their credentials, and the contract is enforced', async () => {
   const { dir, providers, account, provider } = await mockProvider('gcp');
   try {
     assert.equal(await providers.forAccount(account), provider);
@@ -172,7 +173,9 @@ test('the registry: one instance per account and credentials, the real providers
     const both = createProviders({ enabled: ['mock', 'gcp'], store: null, secrets: { get: async () => null }, catalog });
     assert.equal(both.defaultFor('gcp'), 'gcp');
     assert.equal(both.defaultFor('aws'), 'mock');
-    await assert.rejects(both.forAccount({ ...account, provider: 'gcp' }), /roadmap phase 2/);
+    await assert.rejects(both.forAccount({ ...account, provider: 'gcp' }), (err) => isCloudError(err) && err.code === 'invalid' && /service account key/.test(err.message));
+    const withAws = createProviders({ enabled: ['aws'], store: null, secrets: { get: async () => 'hello' }, catalog });
+    await assert.rejects(withAws.forAccount({ ...account, cloud: 'aws', provider: 'aws' }), (err) => err.code === 'invalid' && /Paste a role ARN/.test(err.message));
     assert.throws(() => checkProvider({ name: 'half', account: {} }), /half provider lacks account\.verify/);
   } finally {
     await fs.rm(dir, { recursive: true, force: true });

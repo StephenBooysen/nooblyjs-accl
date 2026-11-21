@@ -38,16 +38,30 @@ export function createLocalServers({ store, config, now, log }) {
     },
     site: (id) => (SITE_ID.test(id ?? '') ? store.readYaml(siteFile(id)) : null),
 
-    /** R1: creates a site, or returns the one that exists. `bind` is where instances' ports listen (127.0.0.1 on one machine). */
-    async ensureSite({ id, name, bind = '127.0.0.1', reserve = DEFAULT_RESERVE, ports = null, by = null }) {
+    /**
+     * R1: creates a site, or returns the one that exists. `bind` is where instances' ports listen (127.0.0.1 on one
+     * machine). A host pool's servers (spec 8.2) are a site too, `mode: 'pool'`, named for its pool and region.
+     */
+    async ensureSite({ id, name, bind = '127.0.0.1', reserve = DEFAULT_RESERVE, ports = null, by = null, mode = 'lan', pool = null, region = null, purpose = null }) {
       if (!SITE_ID.test(id ?? '')) throw new Error('A site id is lower-case letters, digits and hyphens, such as lan-dev.');
       return store.withLock(siteFile(id), async () => {
         const existing = await store.readYaml(siteFile(id));
         if (existing) return existing;
-        const site = { id, name: name ?? id, mode: 'lan', bind, reserve, ...(ports ? { ports } : {}), status: 'active', createdAt: iso(), createdBy: by };
+        const site = { id, name: name ?? id, mode, bind, reserve, ...(ports ? { ports } : {}), ...(mode === 'pool' ? { pool, region, purpose: purpose ?? 'host' } : {}), status: 'active', createdAt: iso(), createdBy: by };
         await store.writeYaml(siteFile(id), site);
         log.info(`local site ${id} created`);
         return site;
+      });
+    },
+
+    /** A pool's site when the pool is deleted (its servers are gone by then). */
+    async setSiteStatus(id, status) {
+      return store.withLock(siteFile(id), async () => {
+        const site = await store.readYaml(siteFile(id));
+        if (!site) return null;
+        const next = { ...site, status };
+        await store.writeYaml(siteFile(id), next);
+        return next;
       });
     },
 
@@ -61,11 +75,23 @@ export function createLocalServers({ store, config, now, log }) {
       return api.ensureSite(fields);
     },
 
-    /** R2: a one-time enrolment token for a site, valid for an hour. Only its hash is kept. */
-    async createEnrolment(siteId, { by = null } = {}) {
+    /**
+     * Where a workload in `region` runs (spec 8.9 R1, 8.2): a LAN site of that id, or the cloud region's host pools.
+     * Resolves { id, name, kind: 'site'|'region', bind, ports, sites: [site ids], cpuFloor } or null.
+     */
+    async place(region) {
+      const site = await api.site(region);
+      if (site && site.mode !== 'pool') return { id: site.id, name: site.name, kind: 'site', bind: site.bind, ports: site.ports ?? null, sites: [site.id], cpuFloor: 0.25 };
+      const pools = (await api.sites()).filter((s) => s.mode === 'pool' && s.region === region && (s.purpose ?? 'host') === 'host' && s.status === 'active');
+      if (!pools.length) return null;
+      return { id: region, name: region, kind: 'region', bind: null, ports: null, sites: pools.map((s) => s.id), pools: pools.map((s) => s.pool), cpuFloor: 1 };
+    },
+
+    /** R2: a one-time enrolment token for a site, valid for an hour. Only its hash is kept. A pool host's token names its VM. */
+    async createEnrolment(siteId, { by = null, vm = null } = {}) {
       if (!(await api.site(siteId))) throw new Error(`No site ${siteId}.`);
       const token = `enr_${crypto.randomBytes(32).toString('base64url')}`;
-      await store.writeYaml(enrolFile(hash(token)), { site: siteId, createdAt: iso(), expiresAt: new Date(now() + TOKEN_TTL_MS).toISOString(), usedAt: null, server: null, createdBy: by });
+      await store.writeYaml(enrolFile(hash(token)), { site: siteId, createdAt: iso(), expiresAt: new Date(now() + TOKEN_TTL_MS).toISOString(), usedAt: null, server: null, createdBy: by, ...(vm ? { vm } : {}) });
       return { token, expiresAt: new Date(now() + TOKEN_TTL_MS).toISOString() };
     },
 
@@ -122,7 +148,7 @@ export function createLocalServers({ store, config, now, log }) {
         const credential = crypto.randomBytes(32).toString('base64url');
         const facts = frame.facts && typeof frame.facts === 'object' ? frame.facts : {};
         await store.writeYaml(serverFile(id), {
-          id, site: e.site, hostname: String(facts.hostname ?? id).slice(0, 100), status: 'enrolling', credentialHash: hash(credential),
+          id, site: e.site, ...(e.vm ? { vm: e.vm } : {}), hostname: String(facts.hostname ?? id).slice(0, 100), status: 'enrolling', credentialHash: hash(credential),
           facts, agentVersion: frame.agentVersion, enrolledAt: iso(), lastSeenAt: iso(), warnings: [],
         });
         await store.writeYaml(enrolFile(h), { ...e, usedAt: iso(), server: id });

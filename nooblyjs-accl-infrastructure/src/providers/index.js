@@ -1,6 +1,6 @@
 // The provider registry (architecture.md §6): one provider instance per cloud account, built with that account's
-// credentials (from secrets) and kept until the account or its credentials change. An adapter's module, and with it
-// its cloud SDKs, is only loaded when an account needs it, so a mock-only install needs no SDK at all.
+// credentials (from secrets) and kept until the account or its credentials change. An adapter's module is only loaded
+// when an account needs it. The GCP and AWS adapters (roadmap 2.8–2.10) talk HTTPS with node:crypto: no cloud SDK.
 import { CloudError } from './errors.js';
 import { checkProvider } from './contract.js';
 import { MockCloud } from './mock/cloud.js';
@@ -15,8 +15,11 @@ export const PROVIDER_LABEL = { mock: 'mock cloud', gcp: 'Google Cloud', aws: 'A
  * @param {object} o.catalog
  * @param {number} [o.mockStepMs]  how long one unit of mock cloud work takes
  * @param {() => number} [o.now]
+ * @param {object} [o.clouds]      the real adapters' options: { fetch, gcp: { endpoints, pollMs }, aws: { endpoint, pollMs,
+ *                                 baseCredentials } } (tests point them at fakes). AWS assumes roles with this server's
+ *                                 own credentials: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN.
  */
-export function createProviders({ enabled, store, secrets, catalog, mockStepMs = 1200, now = () => Date.now() }) {
+export function createProviders({ enabled, store, secrets, catalog, mockStepMs = 1200, now = () => Date.now(), clouds = {} }) {
   const instances = new Map();
   const mockClouds = new Map();
   /** (siteId) => provider, set by mount() when local servers are on (spec 8.9.4). */
@@ -35,7 +38,17 @@ export function createProviders({ enabled, store, secrets, catalog, mockStepMs =
       const { createMockProvider } = await import('./mock/index.js');
       return createMockProvider({ account, credentials, cloud: mockCloud(account), catalog: catalog.forCloud(account.cloud) });
     }
-    throw new CloudError('unavailable', `The ${PROVIDER_LABEL[account.provider] ?? account.provider} provider arrives in roadmap phase 2. Until then accounts run on the mock cloud.`);
+    const fetchImpl = clouds.fetch ?? fetch;
+    if (account.provider === 'gcp') {
+      const { createGcpProvider } = await import('./gcp/index.js');
+      return createGcpProvider({ account, credentials, catalog: catalog.forCloud('gcp'), fetchImpl, now, ...(clouds.gcp ?? {}) });
+    }
+    if (account.provider === 'aws') {
+      const { createAwsProvider } = await import('./aws/index.js');
+      const fromEnv = async () => (process.env.AWS_ACCESS_KEY_ID ? { accessKeyId: process.env.AWS_ACCESS_KEY_ID, secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY, sessionToken: process.env.AWS_SESSION_TOKEN || null } : null);
+      return createAwsProvider({ account, credentials, catalog: catalog.forCloud('aws'), fetchImpl, now, baseCredentials: fromEnv, ...(clouds.aws ?? {}) });
+    }
+    throw new CloudError('unavailable', `There is no ${PROVIDER_LABEL[account.provider] ?? account.provider} provider.`);
   }
 
   return {

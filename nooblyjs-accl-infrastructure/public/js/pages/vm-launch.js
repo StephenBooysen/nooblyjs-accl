@@ -1,5 +1,5 @@
 // Launch a Linux VM (infra-launch-a-vm/LaunchVM.dc.html; product.md §6.3): cloud and region, machine, image and disk,
-// access, and (from roadmap phase 3) a public endpoint, with a summary that prices the choice as it is made — with the
+// access, and a public endpoint (roadmap phase 3), with a summary that prices the choice as it is made — with the
 // same estimate() the server uses. Data: GET /accounts, /catalog?cloud=, /ssh-keys, /my-ip. Sends POST /vms, then
 // opens the new VM, which shows its launch.
 import { pageHead, notice } from '/ui/js/components/index.js';
@@ -98,11 +98,28 @@ export async function render(view, { ctx, query }) {
           ['custom', 'Custom range…'],
         ], myIp.ip ? 'my-ip' : 'custom')}</select>`, help: 'Ports 80 and 443 open when you add a public endpoint.' })}
         ${field({ name: 'sshCidr', label: 'Address range', hidden: Boolean(myIp.ip), control: html`<input class="inf-input inf-mono" name="sshCidr" placeholder="196.25.1.0/24" autocomplete="off"${myIp.ip ? html` disabled` : ''}${describedBy('sshCidr')}>`, wrap: 'inf-field--narrow' })}` })}
-      ${formSection({ n: 5, id: 'endpoint', title: 'Public HTTPS endpoint', body: html`<p class="inf-muted">Public endpoints arrive in roadmap phase 3. You will add one from the VM’s page: the cloud’s own address, or your domain with a certificate that renews itself.</p>` })}
+      ${formSection({ n: 5, id: 'endpoint', title: 'Public HTTPS endpoint', body: html`
+        ${switchRow({ name: 'endpoint.enabled', title: 'Put it on a public address', text: 'Opens ports 80 and 443 and routes HTTPS to a port on the VM. You can add one later from the VM’s page.' })}
+        <div data-endpoint hidden>
+          ${optionCards({
+            name: 'endpoint.address',
+            legend: 'Address',
+            value: 'cloud',
+            items: [
+              { value: 'cloud', title: 'Use the cloud’s address', text: accountOf().cloud === 'aws' ? 'Its public DNS name, with a self-signed certificate browsers warn about.' : 'Its static IP, with a self-signed certificate browsers warn about.' },
+              { value: 'domain', title: 'Use my own domain', text: 'A free certificate from Let’s Encrypt that renews itself, once you add one DNS record.' },
+            ],
+          })}
+          <div class="inf-form__row">
+            ${field({ name: 'endpoint.domain', label: 'Domain', hidden: true, control: html`<input class="inf-input inf-mono" name="endpoint.domain" placeholder="shop.example.com" autocomplete="off" spellcheck="false" disabled${describedBy('endpoint.domain')}>`, help: 'The VM’s page shows the A record to add once its address is reserved.' })}
+            ${field({ name: 'endpoint.port', label: 'Traffic port', control: html`<input class="inf-input" type="number" name="endpoint.port" value="3000" min="1" max="65535" step="1" inputmode="numeric" disabled${describedBy('endpoint.port')}>`, help: 'Where your app will listen on the VM.', wrap: 'inf-field--narrow' })}
+          </div>
+          <div data-endpoint-domain hidden>${switchRow({ name: 'endpoint.redirectHttp', title: 'Redirect HTTP to HTTPS', text: 'Visitors on http:// are sent to https://.', checked: true })}</div>
+        </div>` })}
       <span class="inf-error" data-error="account" aria-live="polite"></span>
     </form>
     <div class="inf-split__side">${summary({
-      rows: [['Cloud', html`<span data-sum="cloud"></span>`], ['Name', html`<span class="inf-mono" data-sum="name">—</span>`], ['Size', html`<span data-sum="size"></span>`], ['Image', html`<span data-sum="image"></span>`], ['Docker', html`<span data-sum="docker"></span>`], ['Endpoint', 'None yet']],
+      rows: [['Cloud', html`<span data-sum="cloud"></span>`], ['Name', html`<span class="inf-mono" data-sum="name">—</span>`], ['Size', html`<span data-sum="size"></span>`], ['Image', html`<span data-sum="image"></span>`], ['Docker', html`<span data-sum="docker"></span>`], ['Endpoint', html`<span data-sum="endpoint">None</span>`]],
       total: '—',
       parts: ' ',
       action: html`<button class="btn btn--primary inf-summary__action" type="submit" form="inf-launch-form">Launch VM</button>`,
@@ -129,6 +146,10 @@ export async function render(view, { ctx, query }) {
     toggle('[data-field="machineType"]', v.size === 'custom');
     toggle('[data-new-key]', (v.sshKeyId ?? NEW_KEY) === NEW_KEY);
     toggle('[data-field="sshCidr"]', v.sshFrom === 'custom');
+    toggle('[data-endpoint]', Boolean(v['endpoint.enabled']));
+    const byDomain = Boolean(v['endpoint.enabled']) && formValues(f)['endpoint.address'] === 'domain';
+    toggle('[data-field="endpoint.domain"]', byDomain);
+    toggle('[data-endpoint-domain]', byDomain);
     const values = formValues(f);
     const machineType = values.size === 'custom' ? values.machineType : cat.sizes[values.size];
     const m = cat.machineTypes[machineType];
@@ -143,6 +164,8 @@ export async function render(view, { ctx, query }) {
     set('size', m ? `${machineType} · ${m.vcpu} vCPU · ${m.memoryGb} GB` : '—');
     set('image', `${image?.label ?? '—'} · ${values.diskGb || '?'} GB`);
     set('docker', values.docker ? 'Installed' : 'Not installed');
+    set('endpoint', !values['endpoint.enabled'] ? 'None'
+      : `${byDomain ? values['endpoint.domain'] || 'Your domain' : 'Cloud’s address'} → port ${values['endpoint.port'] || '?'}`);
     body.querySelector('[data-summary="total"]').textContent = usd(e.monthly);
     body.querySelector('[data-summary="parts"]').textContent = e.monthly === null ? e.problem
       : `${e.parts.map((p) => `${p.label} ${usd(p.monthly)}`).join(' · ')} · billed by ${accountOf().cloudLabel} to ${accountOf().label}`;
@@ -186,6 +209,13 @@ export async function render(view, { ctx, query }) {
     const values = formValues(f);
     if (values.sshKeyId === NEW_KEY) delete values.sshKeyId;
     values.diskGb = Number(values.diskGb);
+    // The endpoint's controls are named endpoint.<field>, so the server's words land under them.
+    const endpoint = {};
+    for (const key of Object.keys(values).filter((k) => k.startsWith('endpoint.'))) {
+      endpoint[key.slice('endpoint.'.length)] = values[key];
+      delete values[key];
+    }
+    if (endpoint.enabled) values.endpoint = { ...endpoint, port: Number(endpoint.port) };
     const problem = resourceNameProblem(values.name);
     if (problem) return showFieldErrors(body, { name: problem });
     const submit = body.querySelector('[type="submit"]');

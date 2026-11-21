@@ -10,13 +10,15 @@ import { startSession } from './core.js';
  * @param {boolean} [o.dev]
  * @param {object} [o.facts]          overrides the mock server's facts
  * @param {object} [o.docker]         an existing mock Docker (the same server reconnecting, with its containers)
+ * @param {object} [o.registry]       where its pushes and pulls go (docker-mock.js)
+ * @param {Map} [o.network]          the mock servers' shared network (a mock ingress reaches containers through it)
  * @param {(w: object) => void} [o.onWelcome]
  * @returns {{ transport: object, docker: ReturnType<typeof createMockDocker>, session: ReturnType<typeof startSession>, welcome: Promise<object>, refused: Promise<{ reason: string, retry: boolean, type: string }> }}
  *   `transport` is the controller's end of the link
  */
-export function startMockAgent({ identity, dev = true, facts, docker: given, onWelcome } = {}) {
+export function startMockAgent({ identity, dev = true, facts, docker: given, registry, network, onWelcome } = {}) {
   const link = createLink();
-  const docker = given ?? createMockDocker({ facts });
+  const docker = given ?? createMockDocker({ facts, registry, network });
   let welcomed;
   const welcome = new Promise((resolve) => { welcomed = resolve; });
   let refusedWith;

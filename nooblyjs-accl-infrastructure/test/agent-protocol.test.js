@@ -72,7 +72,7 @@ test('frames: encode and decode round-trip; size, JSON, version, type and sender
 test('the command set is fixed and has no shell or exec', () => {
   assert.deepEqual(Object.keys(COMMANDS).sort(), [
     'container.list', 'container.remove', 'container.run', 'container.stop', 'facts.get', 'health.check', 'image.build',
-    'job.run', 'logs.follow', 'logs.stop', 'network.ensure', 'stats.watch',
+    'image.pull', 'image.push', 'image.remove', 'ingress.counters', 'ingress.sync', 'job.run', 'logs.follow', 'logs.stop', 'network.ensure', 'stats.watch',
   ]);
   for (const name of ['exec', 'shell', 'container.exec', 'run', 'docker']) assert.match(checkCommand(name, {})[0].message, /Unknown command/);
 });
@@ -244,4 +244,38 @@ test('mock agent: stats arrive with each container\'s limits; jobs report exit c
   assert.ok(await until(() => c.logs('j1').some((l) => l.line === 'Running node etl.js')));
   agent.session.stop();
   await agent.session.closed;
+});
+
+test('8.2.3–8.2.4 the docker run arguments: limits and hardening on every instance; private names only on the tenant network', async () => {
+  const { runArgs } = await import('../agent/docker.js');
+  const args = runArgs({ ...run(), network: 'noobly-t-0123456789ab', aliases: ['api.acme.internal'] }, { envFile: '/state/env/x.env' });
+  const flag = (f) => args[args.indexOf(f) + 1];
+  assert.deepEqual([flag('--cpus'), flag('--memory'), flag('--memory-swap'), flag('--pids-limit'), flag('--cap-drop'), flag('--security-opt'), flag('--restart')],
+    ['0.5', '512m', '512m', '512', 'ALL', 'no-new-privileges', 'on-failure:5'], 'no swap beyond the plan; restarted five times at most');
+  assert.ok(args.includes('--read-only'));
+  assert.ok(!args.some((a) => /privileged|--network=host|^host$/.test(a)), 'never privileged, never the host network');
+  assert.deepEqual([flag('--network'), flag('--network-alias'), flag('-p')], ['noobly-t-0123456789ab', 'api.acme.internal', '127.0.0.1:20001:3000']);
+  assert.equal(args[args.indexOf('--') + 1], IMAGE, 'the image comes after --, so nothing in it reads as a flag');
+  assert.ok(!runArgs(run({ aliases: ['api.acme.internal'] })).includes('--network-alias'), 'no network, no alias');
+
+  const paths = (a) => checkCommand('container.run', a).map((p) => p.path);
+  assert.deepEqual(paths(run({ network: 'noobly-t-0123456789ab', aliases: ['api.acme.internal'] })), []);
+  assert.deepEqual(paths(run({ aliases: ['api.acme.internal'] })), ['args.aliases'], 'an alias needs the tenant network');
+  assert.deepEqual(paths(run({ network: 'noobly-t-0123456789ab', aliases: ['evil.com', 'api.acme.internal --privileged'] })), ['args.aliases.0', 'args.aliases.1']);
+});
+
+test('8.3 image.push and image.pull: references and registry hosts are checked; a run only takes this install\'s own tags', () => {
+  const TAG = 'noobly/0123456789ab/api:abc1234';
+  const auth = { server: 'africa-south1-docker.pkg.dev', username: 'oauth2accesstoken', password: 'ya29.secret' };
+  const paths = (name, a) => checkCommand(name, a).map((p) => p.path);
+  assert.deepEqual(paths('image.push', { tag: TAG, ref: 'africa-south1-docker.pkg.dev/acme-prod/noobly-x/0123456789ab/api:abc1234', auth, stream: 'b-1' }), []);
+  assert.deepEqual(paths('image.push', { tag: TAG, ref: 'africa-south1-docker.pkg.dev/p/r:t', stream: 'b-1' }), ['args.auth'], 'a push always has credentials');
+  assert.deepEqual(paths('image.pull', { ref: 'nginx:1.27', tag: TAG, stream: 'b-1' }), [], 'a public image needs none');
+  assert.deepEqual(paths('image.pull', { ref: 'ghcr.io/acme/api:1.4@sha256:' + 'a'.repeat(64), tag: TAG, stream: 'b-1' }), []);
+  for (const ref of ['--privileged', '-v/:/host', 'nginx latest', 'NGINX', 'nginx:1.27; rm -rf /', 'host/../x']) {
+    assert.deepEqual(paths('image.pull', { ref, tag: TAG, stream: 'b-1' }), ['args.ref'], ref);
+  }
+  assert.deepEqual(paths('image.pull', { ref: 'nginx:1.27', tag: 'nginx:1.27', stream: 'b-1' }), ['args.tag'], 'pulled images are tagged into our namespace');
+  assert.deepEqual(paths('image.push', { tag: TAG, ref: 'r.example.com/p:t', auth: { ...auth, server: '-r.example.com', username: '--password=x' }, stream: 'b-1' }), ['args.auth.server', 'args.auth.username']);
+  assert.deepEqual(paths('image.build', { tag: TAG, labels: LABELS, source: { repo: 'https://github.com/acme/api', branch: 'main' }, runtime: 'node22', buildEnv: [{ key: 'NEXT_PUBLIC_URL', value: 'https://x' }], timeoutS: 30, mask: [], stream: 'b-1' }), ['args.timeoutS']);
 });

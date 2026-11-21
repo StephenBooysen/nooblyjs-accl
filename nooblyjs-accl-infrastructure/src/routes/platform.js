@@ -3,8 +3,9 @@
 // workloads through the launcher, which calls services.platform in process. Mounted only when the platform is on.
 import { handler } from '../util/http.js';
 import { localRoutes } from './local.js';
+import { POOL_PURPOSES } from '../platform/pools.js';
 
-export function platformRoutes({ host, platform, local = null, mountPath = '/infrastructure' }) {
+export function platformRoutes({ host, platform, local = null, pools = null, ingress = null, mountPath = '/infrastructure' }) {
   const r = host.express.Router();
   const p = platform.services;
   r.use(host.requireRole('change-guardrails'));
@@ -22,5 +23,18 @@ export function platformRoutes({ host, platform, local = null, mountPath = '/inf
   r.get('/tenants/:tenant/usage', handler(async (req, res) => res.json(await p.usage(req.params.tenant, { from: req.query.from, to: req.query.to }))));
   // Sites and servers (spec 8.9), when the launcher passes WebSocket upgrades through.
   if (local) r.use('/local', localRoutes({ host, platform, local, mountPath }));
+  // Host pools (spec 8.2.1): operators create a pool, add a host, drain one, and delete an empty pool.
+  if (pools) {
+    r.get('/pools', handler(async (req, res) => res.json({ pools: await pools.list(), purposes: POOL_PURPOSES })));
+    r.post('/pools', handler(async (req, res) => res.status(201).json(await pools.create(req.body ?? {}, req.person))));
+    r.get('/pools/:name', handler(async (req, res) => res.json(await pools.get(req.params.name))));
+    r.post('/pools/:name/hosts', handler(async (req, res) => res.status(202).json(await pools.grow(req.params.name, req.person))));
+    r.post('/hosts/:vm/drain', handler(async (req, res) => res.status(202).json(await pools.drain(req.params.vm, req.person))));
+    r.delete('/pools/:name', handler(async (req, res) => res.json(await pools.remove(req.params.name, req.person))));
+  }
+  // Ingress (spec 8.4.1): per region, its addresses, the last sync and the custom domains waiting for DNS.
+  if (ingress) {
+    r.get('/ingress', handler(async (req, res) => res.json({ regions: await ingress.view() })));
+  }
   return r;
 }

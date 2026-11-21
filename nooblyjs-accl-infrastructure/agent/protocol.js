@@ -38,6 +38,17 @@ export const RULES = {
   envKey: /^[A-Za-z_][A-Za-z0-9_]{0,127}$/,
   commit: /^[0-9a-f]{7,40}$/,
   stream: /^[a-z0-9][a-z0-9-]{0,63}$/,
+  /** A tenant's private name for a workload (spec 8.2 R5): <workload>.<tenant>.internal. */
+  alias: /^[a-z]([-a-z0-9]{0,61}[a-z0-9])?\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?\.internal$/,
+  /** Ingress (spec 8.4): a site id, a host name it answers on, an upstream (a host's private address and port). */
+  site: /^[a-z0-9][a-z0-9-]{0,99}$/,
+  host: /^(?=.{1,253}$)([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/,
+  upstream: /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}:(2\d{4})$/,
+  hookUrl: /^https?:\/\/[A-Za-z0-9.:[\]-]+(\/[A-Za-z0-9._~\/-]*)?$/,
+  /** A registry host (spec 8.3): africa-south1-docker.pkg.dev, 123456789012.dkr.ecr.af-south-1.amazonaws.com. */
+  registry: /^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?(:\d{1,5})?$/,
+  /** An image reference to push to or pull from: [host/]path[:tag][@sha256:digest]. Never starts with a dash. */
+  ref: /^([a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?(:\d{1,5})?\/)?[a-z0-9]+([._-][a-z0-9]+)*(\/[a-z0-9]+([._-][a-z0-9]+)*)*(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?(@sha256:[a-f0-9]{64})?$/,
   ipv4: /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/,
 };
 export const RUNTIMES = ['node22', 'python312', 'go123', 'dockerfile'];
@@ -83,6 +94,8 @@ const S = {
   env: () => ({ kind: 'env', optional: true }),
   strings: (maxItems, maxLen, { optional = true } = {}) => ({ kind: 'strings', maxItems, maxLen, optional }),
   obj: (shape, { optional = false } = {}) => ({ kind: 'obj', shape, optional }),
+  /** A list whose every item meets `item`. */
+  list: (item, maxItems, { optional = false } = {}) => ({ kind: 'list', item, maxItems, optional }),
 };
 
 function check(value, rule, path, problems) {
@@ -135,6 +148,10 @@ function check(value, rule, path, problems) {
         problems.push({ path, message: `Up to ${rule.maxItems} strings of up to ${rule.maxLen} characters.` });
       }
       return;
+    case 'list':
+      if (!Array.isArray(value) || value.length > rule.maxItems) return problems.push({ path, message: `A list of up to ${rule.maxItems}.` });
+      value.forEach((v, i) => check(v, rule.item, `${path}.${i}`, problems));
+      return;
     case 'obj':
       if (typeof value !== 'object' || Array.isArray(value)) return problems.push({ path, message: 'An object.' });
       for (const key of Object.keys(value)) if (!(key in rule.shape)) problems.push({ path: `${path}.${key}`, message: 'Not allowed.' });
@@ -153,6 +170,7 @@ const runShape = {
   image: S.str(RULES.image, { max: 200 }),
   labels: S.labels(),
   network: S.str(RULES.network, { optional: true }),
+  aliases: S.strings(4, 140),
   cpu: S.num(0.05, 64),
   memoryMb: S.int(64, 262_144),
   pidsLimit: S.int(16, 4096, { optional: true }),
@@ -163,6 +181,13 @@ const runShape = {
   command: S.strings(50, 4096),
   readOnly: S.bool(),
 };
+
+/** Short-lived registry credentials (spec 8.3 R3): push on builders, read-only on hosts. Masked; never written to disk for long. */
+const registryAuth = S.obj({
+  server: S.str(RULES.registry, { max: 260 }),
+  username: S.str(/^[A-Za-z0-9._@-]{1,128}$/, { max: 128 }),
+  password: S.text(16_384),
+});
 
 /** command name → the schema of its `args`. Nothing else can be sent (R5). */
 export const COMMANDS = {
@@ -181,10 +206,37 @@ export const COMMANDS = {
     buildCommand: S.str(/^[^\r\n]*$/, { optional: true, max: 500 }),
     startCommand: S.str(/^[^\r\n]*$/, { optional: true, max: 500 }),
     gitToken: S.text(4096, { optional: true }),
+    /** Variables the service marks "available during the build" (spec 8.3 R5); masked in the log. */
+    buildEnv: S.env(),
+    /** The build's time limit (spec 8.3 R2): 15 minutes unless the builder pool says otherwise. */
+    timeoutS: S.int(60, 7200, { optional: true }),
     /** Values to hide in the build log (tokens, secrets). */
     mask: S.strings(100, 32_768),
     stream: S.str(RULES.stream),
   },
+  'image.push': { tag: S.str(RULES.image, { max: 200 }), ref: S.str(RULES.ref, { max: 400 }), auth: registryAuth, stream: S.str(RULES.stream) },
+  'image.pull': { ref: S.str(RULES.ref, { max: 400 }), tag: S.str(RULES.image, { max: 200 }), auth: { ...registryAuth, optional: true }, stream: S.str(RULES.stream) },
+  'image.remove': { tag: S.str(RULES.image, { max: 200 }) },
+  /** Spec 8.4: the whole ingress config, as data the agent renders (ingress.js). Ingress pool VMs only. */
+  'ingress.sync': {
+    sites: S.list(S.obj({
+      id: S.str(RULES.site, { max: 100 }),
+      hosts: S.list(S.str(RULES.host, { max: 253 }), 25),
+      upstreams: S.list(S.str(RULES.upstream, { max: 21 }), 100),
+      health: S.obj({ path: S.str(/^\/[^\s]{0,500}$/, { max: 501 }) }, { optional: true }),
+      sleeping: S.bool(),
+    }), 5000),
+    wildcard: S.obj({
+      domain: S.str(RULES.host, { max: 253 }),
+      provider: S.fn((v) => ['googleclouddns', 'route53'].includes(v), 'googleclouddns or route53.'),
+      project: S.str(/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/, { optional: true, max: 30 }),
+      zone: S.str(/^[A-Z0-9]{1,32}$/, { optional: true, max: 32 }),
+    }, { optional: true }),
+    ask: S.str(RULES.hookUrl, { optional: true, max: 500 }),
+    wake: S.str(RULES.hookUrl, { optional: true, max: 500 }),
+  },
+  /** Spec 8.4 R7: per-host request and byte totals since Caddy started. */
+  'ingress.counters': {},
   'container.run': runShape,
   'container.stop': { name: container, timeoutS: S.int(0, 120, { optional: true }) },
   'container.remove': { name: container },
@@ -205,6 +257,10 @@ export function checkCommand(name, args) {
   check(args ?? {}, { kind: 'obj', shape, optional: false }, 'args', problems);
   if (name === 'container.run' && (args?.hostPort !== undefined) !== (args?.port !== undefined)) {
     problems.push({ path: 'args.hostPort', message: 'A host port goes with a container port.' });
+  }
+  if ((name === 'container.run' || name === 'job.run') && Array.isArray(args?.aliases)) {
+    if (args.aliases.length && !args.network) problems.push({ path: 'args.aliases', message: 'Private names need the tenant\'s network.' });
+    args.aliases.forEach((a, i) => { if (typeof a !== 'string' || !RULES.alias.test(a)) problems.push({ path: `args.aliases.${i}`, message: 'A name such as api.acme.internal.' }); });
   }
   return problems;
 }

@@ -41,7 +41,7 @@ export function ipCidr(ip) {
 const plural = (n, one) => `${n} ${n === 1 ? one : `${one}s`}`;
 const daysSince = (iso, at) => Math.floor((at - new Date(iso).getTime()) / 86_400_000);
 
-export function createVms({ repos, host, operations, providers, remote, sshKeys, catalog, config, cost, now, log }) {
+export function createVms({ repos, host, operations, providers, remote, sshKeys, catalog, config, cost, now, log, endpoints = null, secrets = null }) {
   const iso = () => new Date(now()).toISOString();
   const health = new Map();
   const setVm = (name, fn) => repos.vms.update(name, (r) => r && fn(r));
@@ -63,7 +63,8 @@ export function createVms({ repos, host, operations, providers, remote, sshKeys,
     }
   }
 
-  const ops = vmOperations({ repos, config, remote, sshKeys, catalog, setVm });
+  const endpointsView = endpoints ? (e, vm) => endpoints.view(e, vm) : null;
+  const ops = vmOperations({ repos, config, remote, sshKeys, catalog, setVm, endpoints, secrets });
   operations.define('vm.launch', {
     ...ops['vm.launch'],
     async succeeded(ctx) {
@@ -71,8 +72,9 @@ export function createVms({ repos, host, operations, providers, remote, sshKeys,
       await emit('infrastructure.vm.ready', vm, ctx.account, { ip: vm.observed?.publicIp ?? null }, ctx.op.requestedBy?.id);
     },
     failed: settleFromCloud,
-    /** A cancelled launch never was: what it made is undone, and the record goes. */
+    /** A cancelled launch never was: what it made is undone, and the record goes (with the endpoint asked for). */
     async cancelled(ctx) {
+      for (const endpoint of (await repos.endpoints.list()).filter((e) => e.vm === ctx.op.resource.name)) await repos.endpoints.remove(endpoint.id);
       await repos.vms.remove(ctx.op.resource.name);
     },
   });
@@ -101,7 +103,8 @@ export function createVms({ repos, host, operations, providers, remote, sshKeys,
     async succeeded(ctx) {
       const vm = await repos.vms.get(ctx.op.resource.name);
       await cost.accrue();
-      for (const endpoint of (await repos.endpoints.list()).filter((e) => e.vm === vm.name)) await repos.endpoints.remove(endpoint.id);
+      if (endpoints) await endpoints.removeForVm(vm.name);
+      else for (const endpoint of (await repos.endpoints.list()).filter((e) => e.vm === vm.name)) await repos.endpoints.remove(endpoint.id);
       await repos.vms.remove(vm.name);
       health.delete(vm.name);
       await emit('infrastructure.vm.deleted', vm, ctx.account, {}, ctx.op.requestedBy?.id);
@@ -130,7 +133,9 @@ export function createVms({ repos, host, operations, providers, remote, sshKeys,
     const cat = account ? catalog.forCloud(account.cloud) : null;
     const type = cat?.machineTypes?.[vm.spec?.machineType];
     const image = cat?.images?.find((i) => i.id === vm.spec?.image);
-    const op = c.active.find((o) => o.resource?.type === 'vm' && o.resource.name === vm.name) ?? null;
+    // The VM's own work (launch, start, endpoints); an app's deploy also runs on the VM but shows on the app.
+    const mine = c.active.filter((o) => o.resource?.type === 'vm' && o.resource.name === vm.name && !o.type.startsWith('app.'));
+    const op = mine.find((o) => o.status === 'running') ?? mine[0] ?? null;
     const key = vm.missing ? 'missing' : vm.status;
     const status = STATUS[key] ?? { text: key, tone: 'neutral' };
     const endpoints = c.endpoints.filter((e) => e.vm === vm.name).sort((a, b) => a.host.localeCompare(b.host));
@@ -162,9 +167,15 @@ export function createVms({ repos, host, operations, providers, remote, sshKeys,
       sshCommand: ip ? `ssh ${image?.user ?? 'ubuntu'}@${ip}` : null,
       endpoint: first ? {
         host: first.host,
+        path: first.path && first.path !== '/' ? first.path : null,
         more: endpoints.length - 1,
-        note: key === 'stopped' ? 'Paused while stopped' : first.cert?.status === 'pending' ? 'Certificate pending' : null,
-        live: key === 'running' && first.cert?.status !== 'pending',
+        note: key === 'stopped' ? 'Paused while stopped'
+          : first.status === 'adding' || first.status === 'changing' ? 'Configuring…'
+            : first.status === 'failed' ? 'Failed'
+              : first.dns && first.dns.status !== 'verified' ? 'Waiting for DNS'
+                : first.cert?.status === 'pending' ? 'Certificate pending' : null,
+        live: key === 'running' && (first.status ?? 'active') === 'active' && ['valid', 'self-signed'].includes(first.cert?.status),
+        selfSigned: first.cert?.status === 'self-signed',
       } : null,
       estimate: { monthly: estimate.monthly, note: key === 'stopped' ? 'disk only' : null },
       operation: op,
@@ -192,7 +203,7 @@ export function createVms({ repos, host, operations, providers, remote, sshKeys,
     const account = c.accounts.get(vm.account);
     const key = c.keys.get(vm.spec?.sshKeyId);
     const endpoints = c.endpoints.filter((e) => e.vm === name).sort((a, b) => a.host.localeCompare(b.host));
-    const ports = [`22 (${sshText(vm.spec)})`, ...(endpoints.length ? ['80', '443'] : [])];
+    const ports = [`22 (${sshText(vm.spec)})`, ...(endpoints.some((e) => ['active', 'adding', 'changing'].includes(e.status ?? 'active')) ? ['80', '443'] : [])];
     const recent = (await operations.list({ resource: `vm:${name}` })).slice(0, 5);
     return {
       ...base,
@@ -203,17 +214,8 @@ export function createVms({ repos, host, operations, providers, remote, sshKeys,
       ports: ports.join(' · '),
       runtime: [vm.runtime?.docker ? `Docker ${vm.runtime.docker.split('.')[0]}` : (vm.spec?.docker === false ? 'No Docker' : null), endpoints.length ? 'HTTPS proxy' : null].filter(Boolean).join(' · ') || null,
       createdBy: vm.createdBy ?? null,
-      endpoints: endpoints.map((e) => ({
-        id: e.id,
-        host: e.host,
-        url: base.status === 'running' && e.cert?.status === 'valid' ? `https://${e.host}` : null,
-        app: e.app ?? null,
-        port: e.port ?? null,
-        cert: e.cert?.status === 'valid' ? { text: 'Valid', tone: 'success', expiresAt: e.cert.expiresAt ?? null }
-          : e.cert?.status === 'pending' ? { text: 'Pending', tone: 'warning' }
-            : e.cert?.status === 'self-signed' ? { text: 'Self-signed', tone: 'neutral' } : { text: e.cert?.status ?? '—', tone: 'neutral' },
-        dns: e.dns?.status === 'verified' ? { text: 'Verified', tone: 'success' } : e.dns?.status ? { text: 'Waiting for DNS record', tone: 'warning' } : { text: 'Not needed', tone: 'neutral' },
-      })),
+      endpoints: endpoints.map((e) => (endpointsView ? endpointsView(e, vm) : e)),
+      cloudAddress: account?.cloud === 'aws' && vm.observed?.publicIp ? `ec2-${vm.observed.publicIp.replaceAll('.', '-')}.${vm.spec?.region}.compute.amazonaws.com` : vm.observed?.publicIp ?? null,
       apps: c.apps.filter((a) => a.vm === name).sort((a, b) => a.name.localeCompare(b.name)).map((a) => ({
         name: a.name,
         repo: String(a.source?.repo ?? '').replace(/^https:\/\//, '').replace(/\.git$/, ''),
@@ -225,7 +227,24 @@ export function createVms({ repos, host, operations, providers, remote, sshKeys,
         autoDeploy: a.autoDeploy ? `On push to ${a.source?.branch ?? 'main'}` : 'Off',
       })),
       operations: recent,
+      latestDeploy: await latestDeploy(c.apps.filter((a) => a.vm === name)),
       accountState: account?.state ?? null,
+    };
+  }
+
+  /** The newest deploy of any app on the VM, with the last lines of its log (the VM page's "Latest deploy" card). */
+  async function latestDeploy(apps) {
+    let newest = null;
+    for (const a of apps) {
+      for (const d of await repos.apps.deploys(a.name).list()) if (!newest || String(d.startedAt) > String(newest.startedAt)) newest = d;
+    }
+    if (!newest) return null;
+    const body = newest.body || (newest.operation ? (await repos.operations.get(newest.operation))?.body : '') || '';
+    const lines = body.split('\n').filter(Boolean).map((l) => ({ at: l.slice(0, 24), text: l.slice(26) }));
+    const seconds = newest.endedAt ? Math.max(0, Math.round((Date.parse(newest.endedAt) - Date.parse(newest.startedAt)) / 1000)) : null;
+    return {
+      app: newest.app, id: newest.id, status: newest.status, commit: newest.commit ? String(newest.commit).slice(0, 7) : null, reason: newest.reason ?? null,
+      startedAt: newest.startedAt, endedAt: newest.endedAt ?? null, seconds, lines: lines.slice(-14), more: Math.max(0, lines.length - 14),
     };
   }
 
@@ -273,6 +292,7 @@ export function createVms({ repos, host, operations, providers, remote, sshKeys,
       if (!IPV4_CIDR.test(sshCidr) && !IPV6_CIDR.test(sshCidr)) fields.sshCidr = 'An address range such as 196.25.1.0/24.';
     } else fields.sshFrom = 'Say where SSH may come from.';
 
+    const endpoint = endpoints ? await endpoints.checkLaunch(body.endpoint, fields) : null;
     if (Object.keys(fields).length) throw unprocessable('Check the highlighted fields.', { fields });
     // Opening SSH to the whole internet is a deliberate choice, by a person who may approve.
     if (body.sshFrom === 'anywhere') {
@@ -293,6 +313,7 @@ export function createVms({ repos, host, operations, providers, remote, sshKeys,
       spec: {
         region: region.id, zone: body.zone, size: body.size, machineType, image: body.image, diskGb,
         docker: body.docker !== false && body.docker !== 'false', sshKeyId, sshFrom: body.sshFrom, sshCidr,
+        ...(endpoint ? { endpoint } : {}),
       },
     };
   }
@@ -337,6 +358,7 @@ export function createVms({ repos, host, operations, providers, remote, sshKeys,
       const { account, name, spec } = await validateLaunch(body ?? {}, person, { ip });
       const vm = { name, role: 'app', account: account.id, status: 'starting', spec, ref: {}, createdAt: iso(), createdBy: who(person) };
       await repos.vms.write(vm);
+      await endpoints?.forLaunch(name, spec.endpoint, person);
       await emit('infrastructure.vm.created', vm, account, {}, person?.id);
       const operation = await operations.start('vm.launch', { resource: { type: 'vm', name }, account: account.id, person });
       return { vm: view(vm, await context()), operation };
@@ -381,6 +403,17 @@ export function createVms({ repos, host, operations, providers, remote, sshKeys,
             value.memory = { usedGb: h.memory.usedBytes / GB, totalGb: h.memory.totalBytes / GB };
             value.disk = { usedGb: h.disk.usedBytes / GB, totalGb: h.disk.totalBytes / GB };
             value.uptimeSeconds = h.uptimeSeconds;
+            // Roadmap 6.10: requests in the last 24 hours to this VM's addresses, from Caddy's access log.
+            const hosts = new Set((await repos.endpoints.list()).filter((e) => e.vm === name && e.host).map((e) => e.host));
+            if (hosts.size) {
+              const r = await runner.run('caddy-requests', []);
+              const counted = r.code === 0 ? JSON.parse(r.stdout.trim().split('\n').pop()).hosts.filter((x) => hosts.has(x.host)) : null;
+              if (counted) {
+                const total = counted.reduce((n, x) => n + x.total, 0);
+                const ok = counted.reduce((n, x) => n + x.ok, 0);
+                value.requests = { total, okPercent: total ? Math.floor((ok / total) * 10_000) / 100 : null };
+              }
+            }
           } finally {
             runner.close();
           }

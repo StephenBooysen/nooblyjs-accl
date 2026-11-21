@@ -14,11 +14,7 @@ run:
   env: []
 healthCheck: /healthz
 autoDeploy: false
-current:
-  commit: 77be014
-  deployedAt: '{{ago:0m}}'
-  trigger: person
-  by: { id: stevie, name: Stevie }
+current: null
 createdAt: '{{ago:4m}}'
 createdBy: { id: stevie, name: Stevie }
 ---

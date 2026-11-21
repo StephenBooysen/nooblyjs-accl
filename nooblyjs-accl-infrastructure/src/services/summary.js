@@ -23,6 +23,8 @@ const ENGINE = { mysql: 'MySQL', mongodb: 'MongoDB' };
 function endpointState(endpoint, vm) {
   if (!vm || vm.status === 'stopped') return { state: 'vm-stopped', text: 'VM stopped', tone: 'neutral' };
   if (vm.missing) return { state: 'vm-missing', text: 'VM missing', tone: 'danger' };
+  if (endpoint.status === 'adding' || endpoint.status === 'changing') return { state: 'configuring', text: 'Configuring', tone: 'warning' };
+  if (endpoint.status === 'failed') return { state: 'failed', text: 'Failed', tone: 'danger' };
   if (endpoint.dns?.status === 'waiting') return { state: 'dns-pending', text: 'DNS not verified', tone: 'warning' };
   if (endpoint.cert?.status === 'pending') return { state: 'cert-pending', text: 'Certificate pending', tone: 'warning' };
   if (endpoint.cert?.status === 'failed') return { state: 'cert-failed', text: 'Certificate failed', tone: 'danger' };

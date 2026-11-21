@@ -15,7 +15,8 @@ const sleep = (ms, signal) => new Promise((resolve, reject) => {
 
 /** The inbound rules a VM gets: SSH from where the person said (and from Noobly Cloud's own address). */
 export function firewallRules(spec, controlCidr = process.env.INFRA_CONTROL_CIDR) {
-  const rules = [{ port: 22, from: spec.sshCidr, why: 'ssh' }];
+  // A VM record without the range it was launched with keeps no SSH rule rather than one from nowhere.
+  const rules = spec?.sshCidr ? [{ port: 22, from: spec.sshCidr, why: 'ssh' }] : [];
   for (const cidr of String(controlCidr ?? '').split(',').map((c) => c.trim()).filter(Boolean)) {
     if (cidr !== spec.sshCidr) rules.push({ port: 22, from: cidr, why: 'noobly-cloud' });
   }
@@ -57,8 +58,9 @@ async function waitReady(ctx, remote, vm, patienceMs = 10 * 60_000) {
  * @param {object} o.sshKeys      publicKey()
  * @param {object} o.catalog
  * @param {(name: string, patch: object|((r) => object)) => Promise<object>} o.setVm   updates the VM's record
+ * @param {object} [o.endpoints]   the endpoints service (roadmap phase 3), for the launch's endpoint step
  */
-export function vmOperations({ repos, config, remote, sshKeys, catalog, setVm }) {
+export function vmOperations({ repos, config, remote, sshKeys, catalog, setVm, endpoints = null, secrets = null }) {
   const labelsOf = (name) => config.labels({ 'noobly-name': name });
   const recordOf = async (ctx) => repos.vms.get(ctx.op.resource.name);
   /** The VM's instance id: kept in the operation, then the record, else found by its labels. */
@@ -129,9 +131,15 @@ export function vmOperations({ repos, config, remote, sshKeys, catalog, setVm })
             let instance = await instanceOf(ctx);
             if (!instance) {
               const image = catalog.forCloud(ctx.account.cloud).images.find((i) => i.id === spec.image);
-              const personKey = await sshKeys.publicKey(spec.sshKeyId);
-              if (!personKey) throw new CloudError('invalid', 'The VM\'s SSH key has been removed. Launch it again with another.');
-              const userData = cloudInit({ personKey, controlKey: (await remote.controlKey()).publicKey, docker: spec.docker, packages: image?.packages });
+              // A host pool's VM (spec 8.2) has no person's key: it runs the agent, enrolled with a one-time token.
+              const personKey = spec.sshKeyId ? await sshKeys.publicKey(spec.sshKeyId) : null;
+              if (spec.sshKeyId && !personKey) throw new CloudError('invalid', 'The VM\'s SSH key has been removed. Launch it again with another.');
+              const token = spec.agent?.tokenRef ? await secrets?.get(spec.agent.tokenRef) : null;
+              if (spec.agent && !token) throw new CloudError('invalid', 'The host\'s enrolment token is gone. Add the host again.');
+              const userData = cloudInit({
+                personKey, controlKey: (await remote.controlKey()).publicKey, docker: spec.docker, proxy: spec.proxy !== false, packages: image?.packages,
+                agent: spec.agent ? { controller: spec.agent.controller, token } : null,
+              });
               const made = await compute.create({ name, zone: spec.zone, machineType: spec.machineType, image: spec.image, diskGb: spec.diskGb, labels, userData, address, network });
               instance = made.ref;
               await ctx.save({ instanceRef: instance, createOperation: made.operation });
@@ -159,8 +167,8 @@ export function vmOperations({ repos, config, remote, sshKeys, catalog, setVm })
         {
           key: 'endpoint',
           label: 'Public endpoint',
-          // Public endpoints arrive in roadmap phase 3.
-          run: async () => ({ skipped: true, reason: 'no public endpoint' }),
+          // Roadmap 3.4: the endpoint asked for at launch gets its address, ports 80 and 443, and its site file.
+          run: async (ctx) => (endpoints ? endpoints.launchStep(ctx) : { skipped: true, reason: 'no public endpoint' }),
         },
       ],
     },

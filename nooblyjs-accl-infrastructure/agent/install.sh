@@ -22,7 +22,7 @@ DEV=0
 PREFIX=/opt/noobly-agent
 STATE=/var/lib/noobly-agent
 CONF=/etc/noobly-agent
-FILES="package.json protocol.js core.js connect.js docker.js bin/noobly-agent.js"
+FILES="package.json protocol.js core.js connect.js docker.js ingress.js bin/noobly-agent.js runtimes/bases.json runtimes/node22.Dockerfile runtimes/python312.Dockerfile runtimes/go123.Dockerfile"
 
 say() { printf 'noobly-agent install: %s\n' "$*"; }
 fail() { printf 'noobly-agent install: %s\n' "$*" >&2; exit 1; }
@@ -88,7 +88,7 @@ usermod -aG docker noobly
 say "downloading the agent from $CONTROLLER"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-mkdir -p "$TMP/bin"
+mkdir -p "$TMP/bin" "$TMP/runtimes"
 for f in $FILES; do
   curl -fsSL "$CONTROLLER/agent/files/$f" -o "$TMP/$f" || fail "could not download $f from $CONTROLLER."
 done

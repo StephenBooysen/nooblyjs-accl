@@ -45,11 +45,14 @@ The full contract is in `../.claude/steering/infrastructure-architecture.md` §3
 | --- | --- | --- |
 | `PORT` | `11008` | Standalone only. |
 | `DATA_DIR` | `./data` | Standalone only; this accelerator's files go in `<DATA_DIR>/infrastructure`. |
-| `INFRA_PROVIDERS` | `mock` | The clouds this install may use: `mock`, `gcp`, `aws` (comma-separated). Only `mock` works until roadmap phase 2. |
+| `INFRA_PROVIDERS` | `mock` | The clouds this install may use: `mock`, `gcp`, `aws` (comma-separated). The GCP and AWS adapters need no SDK; they are tested against fakes, not yet against real accounts. The access to grant is in [docs/least-privilege.md](docs/least-privilege.md). |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` | none | This server's own AWS credentials. They are used only to assume each AWS account's `noobly-cloud` role. |
 | `INFRA_SECRET_KEY` | the launcher's `SETTINGS_SECRET`, then `SESSION_SECRET` | Encrypts cloud credentials and passwords. Required in production; in development one is made in `secrets/dev-key.txt`. |
 | `INFRA_MOCK_STEP_MS` | `1200` | How long one unit of mock cloud work takes (a network: 2 units; a VM: 3). |
 | `INFRA_SYNC_CHECK_MS` | `60000` | How often to check which background jobs (account check, inventory sync) are due. |
 | `INFRA_OPS_PER_ACCOUNT` | `4` | How many operations may run at once in one cloud account. |
+| `INFRA_PUBLIC_URL` | the launcher's `publicUrl` | The `https://` address Git hosts, pool hosts' agents and ingress VMs reach this server on. Apps' push webhooks need it. |
+| `INFRA_GIT_MOCK` | `1` outside production | `1`: public repositories the mock Git host knows are read from it, with no network (tokens starting `mock_` always are). `0`: only real GitHub and GitLab. |
 
 ## Tests
 

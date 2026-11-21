@@ -6,7 +6,7 @@ import { ipCidr } from '../services/vms.js';
 const CLOUDS = new Set(['gcp', 'aws']);
 const ROLES = new Set(['app', 'database', 'all']);
 
-export function vmRoutes({ host, vms }) {
+export function vmRoutes({ host, vms, endpoints }) {
   const r = host.express.Router();
   r.get('/', handler(async (req, res) => {
     const { cloud, q, role } = req.query;
@@ -17,6 +17,12 @@ export function vmRoutes({ host, vms }) {
   r.post('/', handler(async (req, res) => res.status(202).json(await vms.launch(req.body ?? {}, req.person, { ip: req.ip }))));
   r.get('/:name', handler(async (req, res) => res.json(await vms.get(req.params.name))));
   r.get('/:name/health', handler(async (req, res) => res.json(await vms.health(req.params.name))));
+  // Public HTTPS endpoints (roadmap phase 3).
+  r.get('/:name/endpoints', handler(async (req, res) => {
+    await vms.get(req.params.name);
+    res.json({ endpoints: await endpoints.list({ vm: req.params.name }) });
+  }));
+  r.post('/:name/endpoints', handler(async (req, res) => res.status(202).json(await endpoints.add(req.params.name, req.body ?? {}, req.person))));
   for (const action of ['start', 'stop', 'restart']) {
     r.post(`/:name/${action}`, handler(async (req, res) => res.status(202).json(await vms[action](req.params.name, req.person))));
   }

@@ -1,27 +1,25 @@
 ---
 id: op_seeddeploy
 type: app.deploy
-resource: { type: app, name: docs }
+resource: { type: vm, name: docs-01 }
 account: stevie-prod
-label: Deploy docs 77be014
-status: running
-progress: 33
+label: Deploy docs to docs-01
+status: queued
+progress: 0
 steps:
-  - { key: connect, label: Connect, status: done }
-  - { key: clone, label: Clone, status: done }
-  - { key: dockerfile, label: Read Dockerfile, status: done }
-  - { key: build, label: Build image, status: running }
-  - { key: start, label: Start new container, status: pending }
-  - { key: health, label: Health check, status: pending }
-  - { key: switch, label: Switch traffic, status: pending }
-  - { key: stop-old, label: Stop previous container, status: pending }
-  - { key: clean, label: Clean up old images, status: pending }
+  - { key: source, label: Check the source, status: pending }
+  - { key: clone, label: Clone the repository, status: pending }
+  - { key: build, label: Build the image, status: pending }
+  - { key: env, label: Write the environment, status: pending }
+  - { key: start, label: Start the container, status: pending }
+  - { key: health, label: Check health, status: pending }
+  - { key: switch, label: Go live on HTTPS, status: pending }
+  - { key: retire, label: Stop the previous version, status: pending }
+  - { key: prune, label: Clean up old images, status: pending }
 state: {}
-input: {}
+input: { app: docs, deploy: dep_seeddocs01, trigger: person }
 requestedBy: { id: stevie, name: Stevie }
 createdAt: '{{ago:1m}}'
-startedAt: '{{ago:1m}}'
 ---
 
-{{ago:1m}}  Queued: Deploy docs 77be014 (by Stevie)
-{{ago:1m}}  Started
+{{ago:1m}}  Queued: Deploy docs to docs-01 (by Stevie)

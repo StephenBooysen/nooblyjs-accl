@@ -5,7 +5,7 @@ import ssh2 from 'ssh2';
 import { createSshRunner } from './runner-ssh.js';
 import { createMockRunner } from './runner-mock.js';
 
-export function createRemote({ providers, secrets, config, catalog, repos }) {
+export function createRemote({ providers, secrets, config, catalog, repos, dns = null, git = null }) {
   let control = null;
 
   /** The install's control key pair: { publicKey, privateKey }. Made once. */
@@ -31,7 +31,7 @@ export function createRemote({ providers, secrets, config, catalog, repos }) {
     /** A runner for the VM `vm` in `account`. */
     async forVm(vm, account) {
       if (account.provider === 'mock') {
-        return createMockRunner({ cloud: providers.mockCloud(account), ref: vm.ref?.instance, catalog: catalog.forCloud(account.cloud) });
+        return createMockRunner({ cloud: providers.mockCloud(account), ref: vm.ref?.instance, catalog: catalog.forCloud(account.cloud), ...(dns ? { dns: dns.mock } : {}), git: git?.() ?? null });
       }
       const host = vm.observed?.publicIp;
       if (!host) throw new Error(`${vm.name} has no public address to reach it on.`);

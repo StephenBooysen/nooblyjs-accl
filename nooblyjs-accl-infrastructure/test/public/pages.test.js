@@ -124,7 +124,7 @@ test('Launch a Linux VM offers the connected accounts, sizes with prices, and a 
   for (const text of [
     'Cloud and region', 'Google Cloud', 'Project stevie-prod', 'Account stevie-aws · 0932', 'africa-south1 · Johannesburg',
     '~$14 / mo', '~$28 / mo', '~$112 / mo', 'Choose any machine type', 'Install Docker on first boot', 'stevie-macbook · ed25519',
-    'My IP only · 127.0.0.1', 'Public endpoints arrive in roadmap phase 3', 'Ready in about 2 minutes',
+    'My IP only · 127.0.0.1', 'Put it on a public address', 'Use the cloud’s address', 'Traffic port', 'Ready in about 2 minutes',
   ]) assert.ok(out.includes(escapeHtml(text)), `the form says "${text}"`);
   assert.match(out, /data-summary="total">\$30</, 'the summary prices e2-medium with 30 GB');
   assert.match(out, /VM \$28 · disk \$2\.04 · billed by GCP to stevie-prod/);
@@ -141,6 +141,93 @@ test('VM detail shows web-01 as the mockup does', async () => {
     'main · ./Dockerfile', 'a1f3c9e', 'On push to main', '203.0.113.24 · static', '10.10.0.12', 'ssh ubuntu@203.0.113.24',
     'stevie-macbook · ed25519', '22 (my IP only) · 80 · 443', 'Docker 27 · HTTPS proxy', '$30 / month', 'Danger zone',
   ]) assert.ok(out.includes(escapeHtml(text)), `the page says "${text}"`);
+});
+
+test('VM detail: endpoints can be added, changed and removed by a Developer, read by a Viewer, and are paused while stopped', async () => {
+  const { out } = await draw('/infrastructure/vms/web-01');
+  for (const text of ['Add endpoint', 'Edit shop.example.com', 'Remove shop.example.com', 'Renews before']) assert.ok(out.includes(escapeHtml(text)), `the page says "${text}"`);
+  assert.match(out, /data-region="endpoint-form" hidden/);
+  const viewer = (await draw('/infrastructure/vms/web-01', { id: 'naledi-k', name: 'Naledi K.', accessRole: 'Viewer' })).out;
+  assert.ok(!viewer.includes('Add endpoint') && !viewer.includes('data-action="endpoint-edit"'), 'a Viewer only reads');
+  const stopped = (await draw('/infrastructure/vms/staging-01')).out;
+  assert.ok(stopped.includes('Paused while stopped') && !stopped.includes('Add endpoint'));
+  const free = (await draw('/infrastructure/vms/worker-01')).out;
+  assert.ok(free.includes(escapeHtml('No public endpoints. Add one to reach an app on this VM from the internet')));
+});
+
+test('the endpoint form: the cloud\'s address or a domain, path, port, certificate and redirect, every control labelled', async () => {
+  const { endpointForm, endpointBody, dnsHint } = await import('../../public/js/components/endpoint-form.js');
+  const fresh = String(endpointForm({ vm: { cloud: 'gcp', cloudAddress: '203.0.113.117' } }));
+  for (const name of ['domain', 'path', 'port', 'cert', 'certificate', 'privateKey']) assert.match(fresh, new RegExp(`<label class="inf-field__label" for="inf-f-${name}">`), name);
+  assert.match(fresh, /value="cloud" checked/);
+  assert.match(fresh, /203\.0\.113\.117/);
+  const change = String(endpointForm({ vm: { cloud: 'gcp' }, e: { id: 'ep_x1x1', address: 'domain', host: 'shop.example.com', path: '/', port: 3000, redirectHttp: true, certSource: 'upload' } }));
+  assert.match(change, /data-address="domain"/);
+  assert.doesNotMatch(change, /name="address"/, 'the address kind stays');
+  assert.ok(change.includes('Leave empty to keep the one uploaded.'));
+  assert.deepEqual(endpointBody({ port: '8080', certificate: '', privateKey: '' }), { port: 8080 });
+  assert.match(String(dnsHint({ dns: { text: 'Waiting for DNS record', expect: { type: 'A', name: 'a.example.com', value: '203.0.113.5' }, alt: null } })), /A a\.example\.com → 203\.0\.113\.5/);
+  assert.equal(String(dnsHint({ dns: { text: 'Verified', expect: { type: 'A' } } })), '');
+});
+
+test('Apps lists the seed\'s six apps as the mockup does, with chips, search and one action per row', async () => {
+  const { out } = await draw('/infrastructure/apps');
+  for (const text of [
+    '6 apps built from Dockerfiles in Git · 3 live on HTTPS', 'Deploy from Git', 'storefront', 'stevie/storefront', 'main · a1f3c9e · auto-deploy',
+    'web-01', 'africa-south1', 'shop.example.com', 'Live', 'by push', 'Private · no endpoint', 'Building · queued', 'Stopped with VM',
+    'Redeploy', 'Start VM', 'View log', 'Search apps',
+  ]) assert.ok(out.includes(escapeHtml(text)), `the list says "${text}"`);
+  assert.match(out, /data-status="live"[^>]*>Live <span class="chip__count">4</);
+  assert.match(out, /href="https:\/\/shop\.example\.com"/);
+  const viewer = (await draw('/infrastructure/apps', { id: 'naledi-k', name: 'Naledi K.', accessRole: 'Viewer' })).out;
+  assert.ok(!viewer.includes('Deploy from Git') && !viewer.includes('data-action="redeploy"'), 'a Viewer only looks');
+});
+
+test('Deploy an app from Git: source with the connection, VM cards, run settings, env links, HTTPS and what happens next', async () => {
+  const { out } = await draw('/infrastructure/apps/new?vm=worker-01');
+  for (const text of [
+    'GitHub connected as', 'stevie', '24 repositories', 'Use another Git host', 'Repository URL', 'Branch', 'Dockerfile path', 'Build context',
+    'Redeploy when', 'is pushed', 'Where it runs', 'web-01', 'api-01', 'Launch a new VM for this app', 'App name', 'Container port',
+    'Restart policy', 'Environment variables', 'Add variable', 'Link a database', 'Link a bucket', 'Serve this app on HTTPS', 'Use my own domain',
+    'Health check', 'What happens next', 'Build the image on worker-01', 'GET /healthz must return 200', 'No extra cost · runs on worker-01',
+  ]) assert.ok(out.includes(escapeHtml(text)), `the form says "${text}"`);
+  assert.match(out, /value="worker-01" checked/, 'the VM asked for is picked');
+  assert.match(out, /value="staging-01" disabled/, 'a stopped VM can\'t be picked');
+  for (const name of ['repo', 'branch', 'gitConnection', 'dockerfile', 'context', 'name', 'port', 'restart', 'endpoint.domain', 'endpoint.path', 'healthCheck']) {
+    assert.match(out, new RegExp(`<label class="inf-field__label" for="inf-f-${name.replace('.', '\\.')}">`), `${name} is labelled`);
+  }
+  const viewer = (await draw('/infrastructure/apps/new', { id: 'naledi-k', name: 'Naledi K.', accessRole: 'Viewer' })).out;
+  assert.ok(viewer.includes('needs the draft permission') && !viewer.includes('<form'));
+});
+
+test('App detail: where it runs, the environment with secrets hidden, deploys with their log, and the actions a person may take', async () => {
+  const { out } = await draw('/infrastructure/apps/storefront');
+  for (const text of [
+    'stevie/storefront @ main · on web-01', 'Live', 'Redeploy', 'Where it runs', 'https://shop.example.com', 'via github-stevie',
+    'GET /healthz', 'On push to main', 'NODE_ENV', 'production', 'DATABASE_URL', 'Linked to', 'catalog', 'MEDIA_BUCKET', 'Deploys',
+    'a1f3c9e', 'Faster product images', 'View log', 'Logs', 'Show the last 200 lines', 'Danger zone', 'Delete app',
+  ]) assert.ok(out.includes(escapeHtml(text)), `the page says "${text}"`);
+  assert.match(out, /href="\/infrastructure\/databases\/catalog"/);
+  const viewer = (await draw('/infrastructure/apps/storefront', { id: 'naledi-k', name: 'Naledi K.', accessRole: 'Viewer' })).out;
+  assert.ok(!viewer.includes('data-action="redeploy"') && !viewer.includes('Delete app'), 'a Viewer only reads');
+  const docs = (await draw('/infrastructure/apps/docs')).out;
+  assert.ok(docs.includes('Building · queued') && docs.includes('Check the source') && docs.includes('Queued: Deploy docs to docs-01'), 'a deploy in progress shows its steps and log');
+  const gone = (await draw('/infrastructure/apps/nope')).out;
+  assert.ok(gone.includes('No app nope'));
+});
+
+test('Cloud accounts lists the Git connections, and only an Owner adds, checks or removes one', async () => {
+  const owner = (await draw('/infrastructure/accounts')).out;
+  for (const text of ['Git connections', 'Add Git connection', 'GitHub', 'github-stevie', '24', 'Connected', 'storefront']) assert.ok(owner.includes(escapeHtml(text)), `the Owner sees "${text}"`);
+  assert.match(owner, /data-action="git-test" data-id="github-stevie"/);
+  const viewer = (await draw('/infrastructure/accounts', { id: 'naledi-k', name: 'Naledi K.', accessRole: 'Viewer' })).out;
+  assert.ok(viewer.includes('github-stevie') && !viewer.includes('Add Git connection') && !viewer.includes('data-action="git-remove"'));
+});
+
+test('VM detail: the latest deploy with its log, and its apps linked to their pages', async () => {
+  const { out } = await draw('/infrastructure/vms/web-01');
+  for (const text of ['Latest deploy · ', 'storefront', 'Finished in 60s', 'https://shop.example.com now goes to storefront-a1f3c9e-op01']) assert.ok(out.includes(escapeHtml(text)), `the page says "${text}"`);
+  assert.match(out, /href="\/infrastructure\/apps\/storefront"/);
 });
 
 test('a name in the URL is escaped, never markup', async () => {

@@ -14,9 +14,10 @@ import { createPlatformRepos } from './repos.js';
 import { createMockRuntime } from './runtime-mock.js';
 import { createLocalRuntime } from './runtime-local.js';
 import { checkSpec, specOf, same, CHANGEABLE, REDEPLOY, RESCALE } from './spec.js';
-import { isTenantId, isWorkloadName, KINDS, STATUSES } from './names.js';
+import { isTenantId, isWorkloadName, KINDS, STATUSES, HTTP_KINDS, internalHost } from './names.js';
+import { CloudError } from '../providers/errors.js';
 
-export const OPERATION_TYPES = ['workload.create', 'workload.deploy', 'workload.scale', 'workload.restart', 'workload.suspend', 'workload.resume', 'workload.delete', 'workload.job.run'];
+export const OPERATION_TYPES = ['workload.create', 'workload.deploy', 'workload.scale', 'workload.restart', 'workload.suspend', 'workload.resume', 'workload.sleep', 'workload.wake', 'workload.delete', 'workload.job.run'];
 export const TRIGGERS = ['push', 'manual', 'config'];
 const TONE = { live: 'success', deploying: 'warning', failed: 'danger', suspended: 'neutral', deleting: 'neutral' };
 const HOUR = 3_600_000;
@@ -119,11 +120,15 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
   function onInstances(c) {
     emit('infrastructure.workload.instances', c).catch((err) => log.warn(`instances event: ${err.message}`));
   }
+  // A container exited and Docker restarted it, or gave up after five tries (spec 8.2 R7): Activity.
+  function onCrash(tenantId, workload, c) {
+    emit('infrastructure.instance.crashed', { tenantId, workload, ...c }).catch((err) => log.warn(`crash event: ${err.message}`));
+  }
   const localRuntime = local ? createLocalRuntime({
-    store, servers: local.servers, hub: local.hub, resolveSecrets, onLog, onInstances, onMetrics, now, log,
+    store, servers: local.servers, hub: local.hub, resolveSecrets, onLog, onInstances, onMetrics, onCrash, now, log,
     // Raw, not Activity: a launcher's proxy re-reads workloads.endpoints() when it hears this.
     onEndpoints: (tenantId, workload) => raw('infrastructure.workload.endpoints', { tenantId, workload }),
-    statsEveryS: local.statsEveryS ?? 10, drainMs: local.drainMs ?? 2000,
+    statsEveryS: local.statsEveryS ?? 10, drainMs: local.drainMs ?? 2000, poolDrainMs: local.poolDrainMs ?? local.drainMs ?? 30_000,
   }) : null;
   const pick = (a) => (localRuntime?.handles(a?.region) ? localRuntime : mockRuntime);
   const runtime = {
@@ -141,12 +146,19 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
     outOfBand: (fn) => mockRuntime.outOfBand(fn),
     reset: () => mockRuntime.reset(),
   };
-  /** Registers a local site as a region. */
+  /** Registers a local site as a region (or a cloud region with host pools, spec 8.2). */
   function addLocalSite(id) {
     if (!localRuntime) return;
     localRuntime.addSite(id);
     regions.add(id);
   }
+  /** A cloud region whose last host pool went: back to the mock runtime (it stays a region: it is in the catalog). */
+  function removeLocalSite(id) {
+    localRuntime?.removeSite(id);
+  }
+
+  /** The private names a workload answers to on its tenant's network (spec 8.2 R5): services and private services. */
+  const aliasesOf = (tenantId, w) => (HTTP_KINDS.has(w.kind) ? [internalHost(tenantId, w.name)] : []);
 
   /** R6: the install's labels and the workload's. */
   const labelsFor = (tenantId, name) => config.labels({ 'noobly-tenant': tenantId, 'noobly-workload': name });
@@ -163,10 +175,20 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
 
   async function setStatus(tenantId, name, status, patch = {}) {
     const before = await repos.workloads.get(tenantId, name);
-    const after = await repos.workloads.update(tenantId, name, (w) => w && { ...w, ...patch, status });
-    if (after && before?.status !== status) await emit('infrastructure.workload.status', { tenantId, workload: name, status, was: before?.status ?? null });
+    const after = await repos.workloads.update(tenantId, name, (w) => w && { ...w, ...patch, status, ...(w.status !== status ? { statusAt: iso() } : {}) });
+    if (after && before?.status !== status) {
+      await emit('infrastructure.workload.status', { tenantId, workload: name, status, was: before?.status ?? null });
+      notifyChanged(tenantId, name);
+    }
     return after;
   }
+  /** Someone who serves the workload (a region's ingress, spec 8.4) wants to hear when its status or domains change. */
+  let onChanged = () => {};
+  let trafficOf = null;
+  let hostsOf = null;
+  const notifyChanged = (tenantId, name) => {
+    try { Promise.resolve(onChanged(tenantId, name)).catch((err) => log.warn(`after ${tenantId}/${name} changed: ${err.message}`)); } catch (err) { log.warn(err.message); }
+  };
 
   // ---------------------------------------------------------------- operation types
 
@@ -187,7 +209,8 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
           await emit('infrastructure.deploy.started', { tenantId: ctx.op.tenant, workload: w.name, deployId, commit, status: 'building', step: 1, of: 3, trigger: ctx.input.trigger }, ctx.op.requestedBy);
           await ctx.save({ deployStarted: true });
         }
-        const built = await runtime.build({ labels: await labelsOf(ctx), commit, source: w.source ?? {}, runtime: w.build?.runtime, build: w.build ?? {}, region: w.region, deployId, signal: ctx.signal, log });
+        const buildEnv = (w.run?.env ?? []).filter((e) => e.build === true);
+        const built = await runtime.build({ labels: await labelsOf(ctx), commit, source: w.source ?? {}, runtime: w.build?.runtime, build: w.build ?? {}, buildEnv, region: w.region, deployId, signal: ctx.signal, log });
         const { image } = built;
         // A real build says which commit it built (the branch's latest when none was asked for).
         const builtCommit = built.commit && built.commit !== commit ? built.commit.slice(0, 40) : null;
@@ -203,7 +226,7 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
         const w = await workloadOf(ctx);
         if (w.kind === 'job') return { skipped: true, reason: 'a job runs when it is asked to' };
         const log = deployLog(ctx.op.tenant, w.name, ctx.input.deployId);
-        await runtime.rollout({ labels: await labelsOf(ctx), image: ctx.state.image, instances: w.instances, plan: w.plan, region: w.region, run: w.run, healthCheck: w.healthCheck, signal: ctx.signal, log });
+        await runtime.rollout({ labels: await labelsOf(ctx), image: ctx.state.image, instances: w.instances, plan: w.plan, region: w.region, run: w.run, healthCheck: w.healthCheck, aliases: aliasesOf(ctx.op.tenant, w), signal: ctx.signal, log });
         await emit('infrastructure.deploy.progress', { tenantId: ctx.op.tenant, workload: w.name, deployId: ctx.input.deployId, commit: ctx.input.commit, status: 'deploying', step: 3, of: 3 }, ctx.op.requestedBy);
         return {};
       },
@@ -246,7 +269,7 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
       // The deploy before this one keeps serving: put its instances back (8.4 makes the rollout itself zero-downtime).
       try {
         // The local runtime never stopped the old instances; the mock puts them back.
-        if (!localRuntime?.handles(w.region)) await runtime.rollout({ labels: await labelsFor(tenantId, name), image: w.current.image, instances: w.instances, plan: w.plan, region: w.region, run: w.run, healthCheck: w.healthCheck, log: deployLog(tenantId, name, deployId) });
+        if (!localRuntime?.handles(w.region)) await runtime.rollout({ labels: await labelsFor(tenantId, name), image: w.current.image, instances: w.instances, plan: w.plan, region: w.region, run: w.run, healthCheck: w.healthCheck, aliases: aliasesOf(tenantId, w), log: deployLog(tenantId, name, deployId) });
         await deployLog(tenantId, name, deployId)(`Kept ${w.current.commit ?? w.current.image} running`);
       } catch (rollbackErr) {
         log.warn(`platform ${tenantId}/${name}: could not put ${w.current.image} back: ${rollbackErr.message}`);
@@ -304,7 +327,7 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
         label: 'Restart at the new size',
         async run(ctx) {
           const w = await workloadOf(ctx);
-          await runtime.rollout({ labels: await labelsOf(ctx), image: w.current.image, instances: w.instances, plan: w.plan, region: w.region, run: w.run, healthCheck: w.healthCheck, signal: ctx.signal, log: ctx.log });
+          await runtime.rollout({ labels: await labelsOf(ctx), image: w.current.image, instances: w.instances, plan: w.plan, region: w.region, run: w.run, healthCheck: w.healthCheck, aliases: aliasesOf(ctx.op.tenant, w), resize: true, signal: ctx.signal, log: ctx.log });
           return {};
         },
       },
@@ -327,7 +350,7 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
       label: stepLabel,
       async run(ctx) {
         const w = await workloadOf(ctx);
-        await runtime.setStatus({ labels: await labelsOf(ctx), action, region: w?.region, run: w?.run, plan: w?.plan, signal: ctx.signal });
+        await runtime.setStatus({ labels: await labelsOf(ctx), action, region: w?.region, run: w?.run, plan: w?.plan, aliases: w ? aliasesOf(ctx.op.tenant, w) : [], signal: ctx.signal });
         return {};
       },
     }],
@@ -336,6 +359,9 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
   simple('workload.restart', 'Restarting', 'Restart', 'restart', 'Restart the instances', 'restart');
   simple('workload.suspend', 'Suspending', 'Suspend', 'stop', 'Stop the instances', 'stop', (ctx) => setStatus(ctx.op.tenant, ctx.op.resource.name, 'suspended'));
   simple('workload.resume', 'Resuming', 'Resume', 'start', 'Start the instances', 'start', (ctx) => setStatus(ctx.op.tenant, ctx.op.resource.name, 'live'));
+  // Idle sleep (spec 8.4.8): like suspend and resume, started by the idle job and the wake hook rather than a person.
+  simple('workload.sleep', 'Going to sleep', 'Sleep', 'stop', 'Stop the instances', 'stop', (ctx) => setStatus(ctx.op.tenant, ctx.op.resource.name, 'sleeping'));
+  simple('workload.wake', 'Waking', 'Wake', 'start', 'Start the instances', 'start', (ctx) => setStatus(ctx.op.tenant, ctx.op.resource.name, 'live'));
   operations.define('workload.delete', {
     label: (op) => `Delete ${name_(op)}`,
     verb: 'Deleting',
@@ -368,15 +394,21 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
       label: 'Run the job',
       async run(ctx) {
         const w = await workloadOf(ctx);
+        // One run at a time per job (8.2 R6): the operations engine runs one operation per workload at a time.
         const result = await runtime.run({ labels: await labelsOf(ctx), image: w.current.image, command: ctx.input.command ?? w.run?.command ?? null, region: w.region, plan: w.plan, run: w.run, signal: ctx.signal, log: ctx.log });
-        return { state: result };
+        const kept = { exitCode: result.exitCode, durationMs: result.durationMs ?? null, peakMemoryMb: result.peakMemoryMb ?? null };
+        if (result.exitCode !== 0) {
+          await ctx.save(kept);
+          throw new CloudError('invalid', `The job exited with code ${result.exitCode}.`);
+        }
+        return { state: kept };
       },
     }],
     async succeeded(ctx) {
-      await repos.workloads.update(ctx.op.tenant, ctx.op.resource.name, (w) => w && { ...w, lastRun: { operation: ctx.op.id, result: 'succeeded', exitCode: ctx.state.exitCode ?? 0, at: iso() } });
+      await repos.workloads.update(ctx.op.tenant, ctx.op.resource.name, (w) => w && { ...w, lastRun: { operation: ctx.op.id, result: 'succeeded', exitCode: ctx.state.exitCode ?? 0, durationMs: ctx.state.durationMs ?? null, peakMemoryMb: ctx.state.peakMemoryMb ?? null, at: iso() } });
     },
     async failed(ctx) {
-      await repos.workloads.update(ctx.op.tenant, ctx.op.resource.name, (w) => w && { ...w, lastRun: { operation: ctx.op.id, result: 'failed', at: iso() } });
+      await repos.workloads.update(ctx.op.tenant, ctx.op.resource.name, (w) => w && { ...w, lastRun: { operation: ctx.op.id, result: 'failed', exitCode: ctx.state.exitCode ?? null, durationMs: ctx.state.durationMs ?? null, peakMemoryMb: ctx.state.peakMemoryMb ?? null, at: iso() } });
     },
   });
 
@@ -503,6 +535,7 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
       const updated = await repos.workloads.update(tenantId, name, (r) => r && { ...r, ...Object.fromEntries(changed.map((k) => [k, checked[k]])) });
       await audit(by, 'workload.updated', tenantId, name, { changed });
       await emit('infrastructure.workload.updated', { tenantId, workload: name, changed }, by);
+      if (changed.includes('domains')) notifyChanged(tenantId, name);
 
       let operation = null;
       if (changed.some((k) => REDEPLOY.includes(k)) && w.status !== 'suspended') {
@@ -554,6 +587,31 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
       await audit(by, 'workload.suspended', tenantId, name);
       const operation = await operations.start('workload.suspend', { resource: resourceOf(tenantId, name), tenant: tenantId, person: by });
       return { workload: view(w), operation };
+    },
+
+    /** Idle sleep (spec 8.4.8): stops a live web service's instances; the next request through the ingress wakes it. */
+    async sleep(tenantId, name, { actor, reason = 'idle' } = {}) {
+      const w = await mustGet(tenantId, name);
+      if (w.kind !== 'service' || w.status !== 'live') throw new HttpError(409, 'conflict', `${name} is not a live web service.`);
+      const operation = await operations.start('workload.sleep', { resource: resourceOf(tenantId, name), tenant: tenantId, input: { reason }, person: actor ? actorOf(actor) : null });
+      return { workload: view(w), operation };
+    },
+
+    /** Wakes a sleeping service; with waitMs, resolves true once it is live again (false if it is not yet). */
+    async wake(tenantId, name, { actor, waitMs = 0 } = {}) {
+      const w = await mustGet(tenantId, name);
+      if (w.status === 'live') return true;
+      if (w.status !== 'sleeping') return false;
+      let op = (await operations.list({ resource: `workload:${tenantId}/${name}`, status: 'active' })).find((o) => o.type === 'workload.wake');
+      op ??= await operations.start('workload.wake', { resource: resourceOf(tenantId, name), tenant: tenantId, person: actor ? actorOf(actor) : null });
+      const end = Date.now() + waitMs;
+      while (Date.now() < end) {
+        if ((await repos.workloads.get(tenantId, name))?.status === 'live') return true;
+        const now_ = await operations.get(op.id);
+        if (['failed', 'cancelled'].includes(now_?.status)) return false;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      return (await repos.workloads.get(tenantId, name))?.status === 'live';
     },
 
     async resume(tenantId, name, { actor } = {}) {
@@ -634,18 +692,34 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
     };
   }
 
-  /** Per region: hosts (spec 8.2) and what the running instances reserve. Operators only. */
+  /** Per region: its hosts (spec 8.2), what they can hold, and what the running instances reserve. Operators only. */
   async function capacity() {
     const containers = await runtime.list({ labels: { 'noobly-install': await config.installId() } });
     const byRegion = new Map();
-    for (const c of containers.filter((x) => x.status === 'running')) {
-      const r = byRegion.get(c.region) ?? { region: c.region, hosts: 0, instances: 0, reserved: { cpu: 0, memoryMb: 0 }, free: null };
+    const regionOf = (id) => {
+      if (!byRegion.has(id)) byRegion.set(id, { region: id, hosts: 0, online: 0, instances: 0, reserved: { cpu: 0, memoryMb: 0 }, allocatable: null, free: null });
+      return byRegion.get(id);
+    };
+    for (const c of containers.filter((x) => x.status === 'running' || x.status === 'starting')) {
+      const r = regionOf(c.region);
       r.instances += 1;
       r.reserved.cpu = round2(r.reserved.cpu + c.cpu);
       r.reserved.memoryMb += c.memoryMb;
-      byRegion.set(c.region, r);
     }
-    return { regions: [...byRegion.values()].sort((a, b) => a.region.localeCompare(b.region)), note: 'Shared host VMs arrive with spec 8.2; until then instances run on the mock runtime.' };
+    // A region with host pools: its hosts' allocatable, and what is free of it.
+    for (const site of (local ? await local.servers.sites() : []).filter((s) => s.mode === 'pool' && (s.purpose ?? 'host') === 'host')) {
+      const r = regionOf(site.region);
+      const hosts = await local.servers.servers({ site: site.id });
+      r.hosts += hosts.length;
+      r.online += hosts.filter((h) => local.hub.isOnline(h.id)).length;
+      r.allocatable ??= { cpu: 0, memoryMb: 0 };
+      for (const h of hosts.filter((x) => local.hub.isOnline(x.id) && !x.draining)) {
+        r.allocatable.cpu = round2(r.allocatable.cpu + (h.allocatable?.cpu ?? 0));
+        r.allocatable.memoryMb += h.allocatable?.memoryMb ?? 0;
+      }
+    }
+    for (const r of byRegion.values()) if (r.allocatable) r.free = { cpu: round2(r.allocatable.cpu - r.reserved.cpu), memoryMb: r.allocatable.memoryMb - r.reserved.memoryMb };
+    return { regions: [...byRegion.values()].sort((a, b) => a.region.localeCompare(b.region)), note: 'A region with a host pool runs its instances on the pool\'s VMs; other cloud regions run on the mock runtime.' };
   }
 
   /**
@@ -696,6 +770,18 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
           const w = await mustGet(tenantId, name);
           return localRuntime?.handles(w.region) ? localRuntime.endpoints(tenantId, name) : [];
         },
+        /** A workload's private name for its tenant's other workloads (spec 8.2 R5), or null for kinds without a port. */
+        internalHost: (tenantId, w) => (HTTP_KINDS.has(w?.kind) ? internalHost(tenantId, w.name) : null),
+        /** Requests, bytes out and 5xx through the ingress over the last `hours` (spec 8.4 R7), and the last request. */
+        async traffic(tenantId, name, { hours = 24 } = {}) {
+          await mustGet(tenantId, name);
+          return trafficOf ? trafficOf(tenantId, name, { hours }) : { requests: 0, bytesOut: 0, errors: 0, lastRequestAt: null, hours };
+        },
+        /** The host names a web service answers on through its region's ingress (spec 8.4 R2). */
+        async hosts(tenantId, name) {
+          const w = await mustGet(tenantId, name);
+          return hostsOf ? hostsOf(tenantId, w) : { platform: [], custom: [] };
+        },
       },
       deploys,
       usage,
@@ -731,10 +817,43 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
         },
       },
       /** The local sites a launcher may offer as regions. */
-      sites: async () => (local ? (await local.servers.sites()).map((s) => ({ id: s.id, name: s.name, mode: s.mode })) : []),
+      sites: async () => (local ? (await local.servers.sites()).filter((s) => s.mode !== 'pool').map((s) => ({ id: s.id, name: s.name, mode: s.mode })) : []),
     },
     overview,
+    /** Called with (tenantId, name) after a workload's status changes or a change lands (ingress, spec 8.4). */
+    setOnChanged: (fn) => { onChanged = fn; },
+    /** The ingress's traffic and host names, for services.workloads.traffic() and hosts(). */
+    setIngress: (i) => { trafficOf = i.traffic; hostsOf = i.hostsOf; },
+    /** The idle job (spec 8.4.8): web services with sleep set and no request for afterMin minutes go to sleep. */
+    /**
+     * Idle sleep (spec 8.4.8): live web services with `sleep` and no request for that long. `canWake(region)` says
+     * whether something there can hold the next request and wake it (a region's ingress); elsewhere nothing sleeps.
+     */
+    async sleepIdle(lastRequestAt, { at = now(), canWake = async () => true } = {}) {
+      let slept = 0;
+      for (const tenantId of await repos.tenants()) {
+        for (const w of await repos.workloads.list(tenantId)) {
+          if (w.kind !== 'service' || w.status !== 'live' || !w.sleep?.afterMin) continue;
+          if (!(await canWake(w.region))) continue;
+          if ((await operations.list({ resource: `workload:${tenantId}/${w.name}`, status: 'active' })).length) continue;
+          const last = Math.max(Date.parse(await lastRequestAt(tenantId, w.name) ?? 0) || 0, Date.parse(w.statusAt ?? w.createdAt ?? 0) || 0);
+          if (at - last < w.sleep.afterMin * 60_000) continue;
+          await workloads.sleep(tenantId, w.name, { reason: 'idle' });
+          slept += 1;
+        }
+      }
+      return { slept };
+    },
+    /** Every tenant's workloads, of one region or all: [{ tenantId, w }] (ingress, spec 8.4). */
+    async allWorkloads(region) {
+      const out = [];
+      for (const tenantId of await repos.tenants()) {
+        for (const w of await repos.workloads.list(tenantId)) if (!region || w.region === region) out.push({ tenantId, w });
+      }
+      return out;
+    },
     addLocalSite,
+    removeLocalSite,
     localRuntime,
     inventory,
     runtime,

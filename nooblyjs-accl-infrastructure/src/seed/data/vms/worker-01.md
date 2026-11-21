@@ -12,6 +12,7 @@ spec:
   docker: true
   sshKeyId: key_seedmacbook
   sshFrom: my-ip
+  sshCidr: 196.25.1.10/32
 ref:
   network: net-seedgcp1
   instance: vm-seedwrk01

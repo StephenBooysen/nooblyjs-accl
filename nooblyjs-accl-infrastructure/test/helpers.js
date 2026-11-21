@@ -55,8 +55,9 @@ export function caller(base) {
  * @param {number} [o.mockStepMs]   the mock cloud's pace (0: cloud work finishes at once)
  * @param {object} [o.platform]   mount()'s platform option ({ enabled: true } for the platform layer, spec 8.1)
  * @param {object} [o.agents]     mount()'s agents option (spec 8.9: verify and timings)
+ * @param {object} [o.options]    more mount() options (publicUrl, git)
  */
-export async function startApp({ mountPath = '/infrastructure', changeHost = (h) => h, serviceRegistry = createTestServiceRegistry(), eventEmitter = new EventEmitter(), seed = false, before, mockStepMs = 0, platform, agents, local } = {}) {
+export async function startApp({ mountPath = '/infrastructure', changeHost = (h) => h, serviceRegistry = createTestServiceRegistry(), eventEmitter = new EventEmitter(), seed = false, before, mockStepMs = 0, platform, agents, local, options = {} } = {}) {
   const rootDir = await tempDir();
   const dataDir = path.join(rootDir, mountPath.replace(/^\//, '') || 'root');
   await fs.mkdir(dataDir, { recursive: true });
@@ -67,7 +68,7 @@ export async function startApp({ mountPath = '/infrastructure', changeHost = (h)
   let hosted = null;
   let mountError = null;
   try {
-    hosted = await mount(app, eventEmitter, serviceRegistry, { mountPath, dataDir, host: changeHost(stand.hostFor(dataDir)), mockStepMs, jobCheckMs: 0, ...(platform ? { platform } : {}), ...(agents ? { agents } : {}), ...(local ? { local } : {}) });
+    hosted = await mount(app, eventEmitter, serviceRegistry, { mountPath, dataDir, host: changeHost(stand.hostFor(dataDir)), mockStepMs, jobCheckMs: 0, ...(platform ? { platform } : {}), ...(agents ? { agents } : {}), ...(local ? { local } : {}), ...options });
   } catch (err) {
     mountError = err;
   }
@@ -93,6 +94,7 @@ export async function startApp({ mountPath = '/infrastructure', changeHost = (h)
     get: (url, o) => call('GET', url, o),
     post: (url, o) => call('POST', url, o),
     put: (url, o) => call('PUT', url, o),
+    patch: (url, o) => call('PATCH', url, o),
     delete: (url, o) => call('DELETE', url, o),
     async close() {
       await hosted?.close();

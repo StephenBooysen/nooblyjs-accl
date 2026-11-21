@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const AGENT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'agent');
-export const AGENT_FILES = ['package.json', 'protocol.js', 'core.js', 'connect.js', 'docker.js', 'bin/noobly-agent.js'];
+export const AGENT_FILES = ['package.json', 'protocol.js', 'core.js', 'connect.js', 'docker.js', 'ingress.js', 'bin/noobly-agent.js', 'runtimes/bases.json', 'runtimes/node22.Dockerfile', 'runtimes/python312.Dockerfile', 'runtimes/go123.Dockerfile'];
 /** The paths, under the mount, that answer without a sign-in. */
 export const AGENT_PUBLIC = ['/agent/install.sh', ...AGENT_FILES.map((f) => `/agent/files/${f}`)];
 const CONTROLLER = /^https?:\/\/[A-Za-z0-9.:[\]-]+(\/[A-Za-z0-9._/-]*)?$/;
@@ -20,7 +20,7 @@ export function controllerOf(req, mountPath) {
 
 export function agentFileRoutes({ host, mountPath }) {
   const r = host.express.Router();
-  const type = (f) => (f.endsWith('.json') ? 'application/json' : 'text/javascript');
+  const type = (f) => (f.endsWith('.json') ? 'application/json' : f.endsWith('.Dockerfile') ? 'text/plain' : 'text/javascript');
 
   r.get('/agent/install.sh', async (req, res, next) => {
     try {

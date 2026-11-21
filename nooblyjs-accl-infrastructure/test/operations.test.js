@@ -99,10 +99,12 @@ test('one operation at a time per resource; different resources run side by side
     await e.ops.start('test.hold', { resource: { type: 'vm', name: 'web-01' }, input: { id: 'a' } });
     await e.ops.start('test.hold', { resource: { type: 'vm', name: 'web-01' }, input: { id: 'b' } });
     await e.ops.start('test.hold', { resource: { type: 'vm', name: 'api-01' }, input: { id: 'c' } });
+    for (let i = 0; i < 200 && !(order.includes('start a') && order.includes('start c')); i += 1) await new Promise((r) => setTimeout(r, 10));
     await new Promise((r) => setTimeout(r, 30));
     assert.deepEqual(order.sort(), ['start a', 'start c'], 'b waits for a; c runs beside a');
     gates.a.open();
-    await new Promise((r) => setTimeout(r, 30));
+    // Under a loaded test run the engine's writes between a and b can take longer than a fixed pause.
+    for (let i = 0; i < 200 && !order.includes('start b'); i += 1) await new Promise((r) => setTimeout(r, 10));
     assert.ok(order.includes('start b'), 'b starts once a is done');
     gates.b.open();
     gates.c.open();
@@ -253,7 +255,8 @@ test('a stop leaves the operation running on disk; the next start carries on fro
   const first = await engine({ dir, queue });
   define(first.ops, gate());
   const { id } = await first.ops.start('test.resume', { resource: { type: 'vm', name: 'web-01' } });
-  await new Promise((r) => setTimeout(r, 30));
+  // Stop once it is waiting in step two (a fixed pause was too short on a busy machine).
+  for (let i = 0; i < 200 && (await first.repos.operations.get(id))?.steps?.[1]?.status !== 'running'; i += 1) await new Promise((r) => setTimeout(r, 10));
   await first.ops.close();
   let op = await first.repos.operations.get(id);
   assert.deepEqual([op.status, op.steps.map((s) => s.status)], ['running', ['done', 'running', 'pending']]);

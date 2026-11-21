@@ -1,6 +1,6 @@
 // The activity log (product.md §6.1, §6.11): everything that was created, changed, deployed, backed up or deleted, and
 // who did it. One append-only YAML stream, activity/ledger.yaml, written by withWords() for every worded event.
-export const ACTIVITY_KINDS = ['account', 'vm', 'app', 'database', 'bucket', 'workload'];
+export const ACTIVITY_KINDS = ['account', 'vm', 'app', 'database', 'bucket', 'workload', 'pool', 'git'];
 
 export function createActivity({ repos, host, now }) {
   return {

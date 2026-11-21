@@ -3,7 +3,7 @@
 // line. The VM's host key is pinned the first time (trust on first use) and checked every time after.
 import crypto from 'node:crypto';
 import { Client } from 'ssh2';
-import { command, scriptText } from './shell.js';
+import { command, scriptText, isStagedName } from './shell.js';
 
 /** "SHA256:…", as ssh-keygen -l prints it. */
 export const fingerprint = (key) => `SHA256:${crypto.createHash('sha256').update(key).digest('base64').replace(/=+$/, '')}`;
@@ -56,8 +56,11 @@ export function createSshRunner({ host, port = 22, privateKey, hostKey = null, p
   }
 
   return {
-    /** Runs a script: { code, stdout, stderr }. Rejects when the connection fails or `signal` aborts. */
-    async run(script, args = [], { signal, timeoutMs: limit = 15 * 60_000 } = {}) {
+    /**
+     * Runs a script: { code, stdout, stderr }. Rejects when the connection fails or `signal` aborts. `onLine(text)` gets
+     * each line of stdout as it arrives (a build's output, shown live).
+     */
+    async run(script, args = [], { signal, timeoutMs: limit = 15 * 60_000, onLine } = {}) {
       const text = scriptText(script);
       const client = await connect();
       return new Promise((resolve, reject) => {
@@ -71,9 +74,18 @@ export function createSshRunner({ host, port = 22, privateKey, hostKey = null, p
             reject(signal.reason ?? new Error('aborted'));
           };
           signal?.addEventListener('abort', abort, { once: true });
-          stream.on('data', (d) => { stdout += d; });
+          let partial = '';
+          stream.on('data', (d) => {
+            stdout += d;
+            if (!onLine) return;
+            partial += d;
+            const parts = partial.split('\n');
+            partial = parts.pop();
+            for (const line of parts) onLine(line);
+          });
           stream.stderr.on('data', (d) => { stderr += d; });
           stream.on('close', (code) => {
+            if (onLine && partial) onLine(partial);
             clearTimeout(timer);
             signal?.removeEventListener('abort', abort);
             resolve({ code: code ?? -1, stdout, stderr });
@@ -82,6 +94,20 @@ export function createSshRunner({ host, port = 22, privateKey, hostKey = null, p
           return undefined;
         });
       });
+    },
+    /**
+     * Sends a file to ~/.noobly/<name> over SFTP (site files, certificates, env files), for a script to move into place.
+     * Contents never pass through a command line (architecture.md §9).
+     */
+    async put(name, content, { mode = 0o600 } = {}) {
+      if (!isStagedName(name)) throw new Error(`Not a staged file name: ${JSON.stringify(name)}`);
+      const client = await connect();
+      const sftp = await new Promise((resolve, reject) => client.sftp((err, s) => (err ? reject(err) : resolve(s))));
+      try {
+        await new Promise((resolve, reject) => sftp.writeFile(`.noobly/${name}`, content, { mode }, (err) => (err ? reject(err) : resolve())));
+      } finally {
+        sftp.end();
+      }
     },
     close() {
       connecting?.then((c) => c.end()).catch(() => {});

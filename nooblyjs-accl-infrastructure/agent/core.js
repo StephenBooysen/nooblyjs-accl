@@ -103,13 +103,32 @@ export function startSession({ transport, docker, identity, facts = async () => 
     'image.build': async (a) => {
       ownLabels(a.labels);
       if (a.source.repo.startsWith('file:') && !dev) throw new CommandError('refused', 'file:// sources run only on an agent started with --dev.');
-      const out = logStream(a.stream, { mask: [...(a.mask ?? []), ...(a.gitToken ? [a.gitToken] : [])] });
+      const out = logStream(a.stream, { mask: [...(a.mask ?? []), ...(a.gitToken ? [a.gitToken] : []), ...(a.buildEnv ?? []).map((e) => e.value)] });
       try {
         return await docker.build(a, (line) => out.push('build', line));
       } finally {
         out.end();
       }
     },
+    'image.push': async (a) => {
+      const out = logStream(a.stream, { mask: [a.auth.password] });
+      try {
+        return await docker.push(a, (line) => out.push('build', line));
+      } finally {
+        out.end();
+      }
+    },
+    'image.pull': async (a) => {
+      const out = logStream(a.stream, { mask: a.auth ? [a.auth.password] : [] });
+      try {
+        return await docker.pull(a, (line) => out.push('build', line));
+      } finally {
+        out.end();
+      }
+    },
+    'image.remove': async (a) => docker.removeImage(a.tag),
+    'ingress.sync': async (a) => docker.ingressSync(a),
+    'ingress.counters': async () => ({ hosts: await docker.ingressCounters() }),
     'container.run': async (a) => {
       ownLabels(a.labels);
       if (await docker.inspect(a.name)) throw new CommandError('refused', `${a.name} exists already.`);
@@ -165,7 +184,8 @@ export function startSession({ transport, docker, identity, facts = async () => 
       let seq = 0;
       const tick = async () => {
         try {
-          send({ type: 'stats', stream: a.stream, seq: seq++, at: new Date().toISOString(), samples: await docker.stats(a.labels) });
+          // Samples of the running containers, and every container's state and restart count (crashes, spec 8.2 R7).
+          send({ type: 'stats', stream: a.stream, seq: seq++, at: new Date().toISOString(), samples: await docker.stats(a.labels), containers: await docker.states(a.labels) });
         } catch (err) {
           onError(err);
         }

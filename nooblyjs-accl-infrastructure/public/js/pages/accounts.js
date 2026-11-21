@@ -1,12 +1,14 @@
 // Cloud accounts (no mockup yet; product.md §6.11): the GCP projects and AWS accounts Noobly Cloud works in, whether
 // each is connected, and connecting a new one. Only an Owner (change-guardrails) connects or removes. Data:
 // GET /accounts, GET /about (which providers this install uses), GET /catalog?cloud= (regions for the form).
-// Git connections join this page in roadmap phase 6.
+// Below them, the Git connections (roadmap 6.1; product.md §6.11): a GitHub or GitLab personal access token, checked
+// on save and daily, that clones private repositories and adds webhooks. Data: GET /git/connections.
 import { pageHead, notice, statusPill, dataTable, card } from '/ui/js/components/index.js';
 import { ago } from '/ui/js/format.js';
 import { html, button, errorCard, isAbort, reloadable, say, messageRegion, REFRESH_MS } from '../lib.js';
 import { cloudBadge, confirmDialog } from '../components/index.js';
 import { resourceNameProblem } from '../shared/names.js';
+import { showFieldErrors } from '../forms.js';
 
 const CLOUDS = [
   { id: 'gcp', label: 'Google Cloud', idField: 'projectId', idLabel: 'Project ID', idHelp: 'The GCP project to work in, e.g. stevie-prod.', credentials: 'Service account key (JSON)', credentialsHelp: 'A key for a service account with the Compute Admin, Cloud SQL Admin and Storage Admin roles on the project.' },
@@ -57,6 +59,43 @@ function accountsTable(accounts, ctx) {
   });
 }
 
+const GIT = [['github', 'GitHub'], ['gitlab', 'GitLab']];
+
+function gitForm(help) {
+  return html`<form class="card inf-form" data-form="git" novalidate aria-labelledby="inf-git-h">
+    <h2 class="card__title" id="inf-git-h">Add a Git connection</h2>
+    <fieldset class="inf-choice"><legend class="inf-field__label">Git host</legend>
+      ${GIT.map(([id, label], i) => html`<label class="inf-option"><input type="radio" name="provider" value="${id}"${i === 0 ? html` checked` : ''}><span>${label}</span></label>`)}
+    </fieldset>
+    <span class="inf-error" data-error="provider" aria-live="polite"></span>
+    ${field('token', 'Personal access token', html`<input class="inf-input inf-mono" id="inf-acc-token" name="token" type="password" required autocomplete="off" spellcheck="false" aria-describedby="inf-acc-token-help inf-acc-token-error">`, html`<span data-git-help>${help.github}</span> We check whose it is, its scopes and its expiry now and every day, and keep it encrypted. It is never shown again.`)}
+    <div class="actions">${button({ label: 'Add connection', type: 'submit' })}${button({ label: 'Cancel', kind: 'secondary', attrs: { 'data-action': 'git-close' } })}</div>
+  </form>`;
+}
+
+const GIT_STATE = { connected: ['Connected', 'success'], 'needs-attention': ['Needs attention', 'warning'], failed: ['Not working', 'danger'] };
+
+function gitTable(connections, ctx) {
+  const canChange = ctx.can('change-guardrails');
+  return dataTable({
+    caption: 'Git connections',
+    empty: 'No Git connections. Public repositories deploy without one; add one for private repositories and auto-deploy.',
+    rows: connections,
+    columns: [
+      { key: 'id', label: 'Connection', render: (c) => html`<strong>${c.providerLabel}</strong> as <strong>${c.user}</strong><span class="inf-sub inf-mono">${c.id}</span>` },
+      { key: 'repos', label: 'Repositories', numeric: true, render: (c) => (c.repoCount === null ? '—' : String(c.repoCount)) },
+      { key: 'expires', label: 'Token expires', render: (c) => (c.expiresAt ? html`<time datetime="${c.expiresAt}">${new Date(c.expiresAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</time>` : 'Never') },
+      { key: 'state', label: 'Status', render: (c) => html`${statusPill({ text: (GIT_STATE[c.state] ?? [c.state])[0], tone: (GIT_STATE[c.state] ?? [null, 'neutral'])[1] })}${c.problem ? html`<span class="inf-sub">${c.problem}</span>` : ''}` },
+      { key: 'apps', label: 'Used by', render: (c) => (c.apps.length ? c.apps.join(', ') : html`<span class="inf-muted">No apps</span>`) },
+      {
+        key: 'actions',
+        label: html`<span class="visually-hidden">Actions</span>`,
+        render: (c) => (canChange ? html`<span class="inf-actions">${button({ label: 'Check now', kind: 'secondary', small: true, attrs: { 'data-action': 'git-test', 'data-id': c.id } })}${button({ label: 'Remove', kind: 'secondary', small: true, attrs: { 'data-action': 'git-remove', 'data-id': c.id } })}</span>` : ''),
+      },
+    ],
+  });
+}
+
 export async function render(view, { ctx }) {
   const canChange = ctx.can('change-guardrails');
   let about = { providers: [] };
@@ -76,9 +115,15 @@ export async function render(view, { ctx }) {
     ${messageRegion()}
     ${mockOnly ? notice({ title: 'Running on the mock cloud', text: 'This install uses the mock cloud: connecting an account creates nothing in Google Cloud or AWS. The GCP and AWS providers arrive in roadmap phase 2.', tone: 'muted', iconName: 'info' }) : ''}
     <div data-region="form" hidden></div>
-    <div data-region="list"></div>`);
+    <div data-region="list"></div>
+    <div class="page-head inf-subhead"><div><h2 class="inf-subhead__title">Git connections</h2><p class="lead">Clone private repositories and redeploy apps when you push.</p></div>${canChange ? button({ label: 'Add Git connection', icon: 'plus', kind: 'secondary', attrs: { 'data-action': 'git-open' } }) : ''}</div>
+    <div data-region="git-form" hidden></div>
+    <div data-region="git"></div>`);
   const list = view.querySelector('[data-region="list"]');
   const formRegion = view.querySelector('[data-region="form"]');
+  const gitRegion = view.querySelector('[data-region="git"]');
+  const gitFormRegion = view.querySelector('[data-region="git-form"]');
+  let gitHelp = {};
 
   const redraw = await reloadable(list, ctx, async () => {
     let accounts;
@@ -90,6 +135,13 @@ export async function render(view, { ctx }) {
     }
     if (!ctx.isCurrent()) return 0;
     list.innerHTML = String(card({ label: 'Cloud accounts', body: accountsTable(accounts, ctx) }));
+    try {
+      const git = await ctx.api.get('git/connections');
+      gitHelp = git.help;
+      gitRegion.innerHTML = String(card({ label: 'Git connections', body: gitTable(git.connections, ctx) }));
+    } catch (err) {
+      if (!isAbort(err)) gitRegion.innerHTML = String(errorCard(err, 'the Git connections'));
+    }
     return accounts.some((a) => a.state === 'connecting') ? REFRESH_MS : 0;
   });
 
@@ -118,6 +170,11 @@ export async function render(view, { ctx }) {
   }
 
   view.addEventListener('change', (event) => {
+    if (event.target.name === 'provider') {
+      const help = gitFormRegion.querySelector('[data-git-help]');
+      if (help) help.textContent = gitHelp[event.target.value] ?? '';
+      return;
+    }
     if (event.target.name !== 'cloud') return;
     for (const block of formRegion.querySelectorAll('[data-cloud]')) {
       const on = block.dataset.cloud === event.target.value;
@@ -127,6 +184,26 @@ export async function render(view, { ctx }) {
   }, { signal: ctx.signal });
 
   view.addEventListener('submit', async (event) => {
+    if (event.target.dataset.form === 'git') {
+      event.preventDefault();
+      const body = Object.fromEntries(new FormData(event.target));
+      const submit = event.target.querySelector('[type="submit"]');
+      submit.disabled = true;
+      try {
+        const c = await ctx.api.post('git/connections', body);
+        gitFormRegion.hidden = true;
+        gitFormRegion.replaceChildren();
+        say(view, `Connected ${c.providerLabel} as ${c.user}${c.problem ? `. ${c.problem}` : ` · ${c.repoCount} repositories`}.`, c.state === 'connected' ? 'success' : 'error');
+        await redraw();
+      } catch (err) {
+        if (isAbort(err)) return;
+        if (err.details?.fields) showFieldErrors(gitFormRegion, err.details.fields);
+        else showFieldErrors(gitFormRegion, { token: err.message });
+      } finally {
+        submit.disabled = false;
+      }
+      return;
+    }
     if (event.target.dataset.form !== 'connect') return;
     event.preventDefault();
     const body = Object.fromEntries(new FormData(event.target));
@@ -154,6 +231,17 @@ export async function render(view, { ctx }) {
     if (!target) return;
     const { action, id } = target.dataset;
     if (action === 'connect-open') return openForm();
+    if (action === 'git-open') {
+      gitFormRegion.innerHTML = String(gitForm(gitHelp));
+      gitFormRegion.hidden = false;
+      gitFormRegion.querySelector('input[name="token"]').focus();
+      return undefined;
+    }
+    if (action === 'git-close') {
+      gitFormRegion.hidden = true;
+      gitFormRegion.replaceChildren();
+      return undefined;
+    }
     if (action === 'connect-close') {
       formRegion.hidden = true;
       formRegion.replaceChildren();
@@ -164,6 +252,21 @@ export async function render(view, { ctx }) {
         target.disabled = true;
         const account = await ctx.api.post(`accounts/${encodeURIComponent(id)}/verify`);
         say(view, `${account.label}: ${account.stateText}${account.stateMessage ? ` — ${account.stateMessage}` : ''}.`, account.state === 'connected' ? 'success' : 'error');
+      }
+      if (action === 'git-test') {
+        target.disabled = true;
+        const c = await ctx.api.post(`git/connections/${encodeURIComponent(id)}/test`);
+        say(view, `${c.id}: ${(GIT_STATE[c.state] ?? [c.state])[0]}${c.problem ? ` — ${c.problem}` : ''}.`, c.state === 'connected' ? 'success' : 'error');
+      }
+      if (action === 'git-remove') {
+        const ok = await confirmDialog(view, {
+          title: `Remove ${id}?`,
+          text: 'Its token is deleted. Apps that use it keep running, but can’t redeploy from a private repository or on push until they get another connection.',
+          confirmLabel: 'Remove connection',
+        });
+        if (!ok) return undefined;
+        await ctx.api.del(`git/connections/${encodeURIComponent(id)}`);
+        say(view, `Removed ${id}.`, 'success');
       }
       if (action === 'remove') {
         const ok = await confirmDialog(view, {

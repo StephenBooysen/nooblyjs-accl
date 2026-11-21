@@ -45,7 +45,7 @@ function table(vms, ctx, filter) {
         key: 'endpoint',
         label: 'HTTPS endpoint',
         render: (v) => (v.endpoint
-          ? html`${v.endpoint.live ? html`<a class="inf-mono" href="https://${v.endpoint.host}" rel="noopener">${v.endpoint.host}</a>` : html`<span class="inf-mono inf-muted">${v.endpoint.host}</span>`}${v.endpoint.note || v.endpoint.more ? html`<span class="inf-sub">${v.endpoint.note ?? `+${v.endpoint.more} more`}</span>` : ''}`
+          ? html`${v.endpoint.live ? html`<a class="inf-mono" href="https://${v.endpoint.host}${v.endpoint.path ? `${v.endpoint.path}/` : ''}" rel="noopener">${v.endpoint.host}${v.endpoint.path ?? ''}</a>` : html`<span class="inf-mono inf-muted">${v.endpoint.host}${v.endpoint.path ?? ''}</span>`}${v.endpoint.note || v.endpoint.more || v.endpoint.selfSigned ? html`<span class="inf-sub">${v.endpoint.note ?? (v.endpoint.more ? `+${v.endpoint.more} more` : 'Self-signed')}</span>` : ''}`
           : html`<span class="inf-muted">Private only</span>`),
       },
       { key: 'cost', label: 'Est. / month', numeric: true, render: (v) => html`${usd(v.estimate.monthly)}${v.estimate.note ? html`<span class="inf-sub">${v.estimate.note}</span>` : ''}` },
@@ -65,7 +65,7 @@ export async function render(view, { query, ctx }) {
     ${messageRegion()}
     <div class="inf-toolbar"><div data-region="chips"></div><div class="inf-toolbar__search"><label class="visually-hidden" for="inf-vm-search">Search VMs</label><input class="inf-input" id="inf-vm-search" type="search" placeholder="Search by name, IP or domain" autocomplete="off"></div></div>
     <div data-region="table"></div>
-    <div class="inf-band"><strong>Every VM is ready for apps.</strong> Docker is installed on its first boot unless you switch it off. Public HTTPS endpoints, with certificates that renew themselves, arrive in roadmap phase 3.</div>`);
+    <div class="inf-band"><strong>Every VM is ready for apps.</strong> Docker is installed on its first boot unless you switch it off. Put one on a public HTTPS address when you launch it or from its page: the cloud’s own address, or your domain with a certificate that renews itself.</div>`);
   const lead = view.querySelector('.page-head .lead');
   const chipsRegion = view.querySelector('[data-region="chips"]');
   const tableRegion = view.querySelector('[data-region="table"]');

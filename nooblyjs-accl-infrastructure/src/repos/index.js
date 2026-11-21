@@ -70,6 +70,8 @@ export function createRepos(store, { log }) {
     accounts: docs(store, 'accounts', isResourceName, log, 'id'),
     vms: docs(store, 'vms', isResourceName, log, 'name'),
     endpoints: docs(store, 'endpoints', isGeneratedId, log, 'id'),
+    /** Git connections (roadmap 6.1): the token is a secret; the record holds its ref. */
+    gitConnections: docs(store, 'git-connections', isResourceName, log, 'id'),
     apps: {
       ...apps,
       /** One app's deploys: apps/<name>/deploys/<id>.md, whose body is the deploy log. */

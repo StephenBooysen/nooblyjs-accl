@@ -7,11 +7,13 @@ import { ACTIVITY_KINDS } from '../services/activity.js';
 import { accountRoutes } from './accounts.js';
 import { operationRoutes } from './operations.js';
 import { vmRoutes, sshKeyRoutes, myIp } from './vms.js';
+import { endpointRoutes } from './endpoints.js';
+import { appRoutes, gitRoutes } from './apps.js';
 import { platformRoutes } from './platform.js';
 
 const READS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
-export function createApi({ host, log, about, seed, summary, accounts, operations, activity, catalog, cost, vms, sshKeys, platform = null, local = null, mountPath = '/infrastructure' }) {
+export function createApi({ host, log, about, seed, summary, accounts, operations, activity, catalog, cost, vms, sshKeys, endpoints, apps, git, pools = null, ingress = null, platform = null, local = null, mountPath = '/infrastructure' }) {
   const api = host.express.Router();
   api.use(host.express.json({ limit: '1mb' }));
   api.use(host.auth);
@@ -46,11 +48,14 @@ export function createApi({ host, log, about, seed, summary, accounts, operation
   // ---------- resources ----------
   api.use('/accounts', accountRoutes({ host, accounts }));
   api.use('/operations', operationRoutes({ host, operations }));
-  api.use('/vms', vmRoutes({ host, vms }));
+  api.use('/vms', vmRoutes({ host, vms, endpoints }));
+  api.use('/endpoints', endpointRoutes({ host, endpoints }));
+  api.use('/apps', appRoutes({ host, apps }));
+  api.use('/git', gitRoutes({ host, git }));
   api.use('/ssh-keys', sshKeyRoutes({ host, sshKeys }));
   api.get('/my-ip', myIp);
   // The platform layer (spec 8.1), only when the launcher turned it on.
-  if (platform) api.use('/platform', platformRoutes({ host, platform, local, mountPath }));
+  if (platform) api.use('/platform', platformRoutes({ host, platform, local, pools, ingress, mountPath }));
 
   api.use(apiNotFound);
   api.use(apiErrors({ log }));

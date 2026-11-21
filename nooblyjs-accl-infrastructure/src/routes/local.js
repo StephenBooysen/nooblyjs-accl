@@ -84,7 +84,8 @@ export function localRoutes({ host, platform, local, mountPath }) {
 
   r.get('/', handler(async (req, res) => {
     const instances = await instancesNow();
-    const sites = await Promise.all((await servers.sites()).map((s) => siteView(s, instances)));
+    // A host pool's site is shown with its pool (Host pools), not here.
+    const sites = await Promise.all((await servers.sites()).filter((s) => s.mode !== 'pool').map((s) => siteView(s, instances)));
     res.json({ sites, agentVersion: AGENT_VERSION });
   }));
 

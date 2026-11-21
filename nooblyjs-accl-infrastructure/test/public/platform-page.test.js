@@ -53,7 +53,7 @@ test('the Platform screen lists the seed tenant\'s workloads, read-only', async 
   for (const text of [
     '1 tenant · 6 workloads · 5 live', 'exclusivity-life', 'api', 'Web service', '2 × 1 vCPU · 2 GB', 'api-exclusivity.nooblyjs.app',
     'Private service', 'Inside the tenant only', 'Static site', 'Files only', 'Schedule 0 2 * * *', 'Last run succeeded', 'Deploying', 'a1f3c9e',
-    'af-south-1: 6 instances', 'Shared host VMs arrive with spec 8.2',
+    'af-south-1: 6 instances', 'A region with a host pool runs its instances on the pool', 'Host pools', 'No host pools yet',
   ]) assert.ok(out.includes(escapeHtml(text)), `the screen says "${text}"`);
   assert.doesNotMatch(list, /<button|<form/, 'nothing to press on workloads: read-only');
   assert.doesNotMatch(out, /style=/);
@@ -90,4 +90,38 @@ test('Sites and servers: a non-operator never sees it', async () => {
   apps.push(app);
   const { out } = await draw(app, { id: 'naledi-k', name: 'Naledi K.', accessRole: 'Viewer' });
   assert.doesNotMatch(out, /Sites and servers|lan-dev/);
+});
+
+test('8.2.1 the Host pools section: each pool, its hosts with their agent\'s status and reservations, Add a host and Drain', async () => {
+  const app = await startApp({ seed: true, platform: { enabled: true }, agents: { checkMs: 0 } });
+  apps.push(app);
+  await app.hosted.pools.create({ name: 'web', account: 'stevie-prod', region: 'africa-south1', size: 'medium', min: 1, max: 2 }, { id: 'stevie', name: 'Stevie' });
+  await app.hosted.idle();
+  const { out } = await draw(app);
+  for (const text of ['Host pools', 'Create pool', 'Hosts · africa-south1 · stevie-prod · e2-medium · 1–2 hosts · 1 online', 'web-1', 'Online', '0 / 1.75 vCPU', '0 MB / 3.5 GB', 'Add a host', 'Drain web-1']) {
+    assert.ok(out.includes(escapeHtml(text)), `the page says "${text}"`);
+  }
+  assert.ok(!out.includes('Delete pool'), 'a pool with hosts cannot be deleted');
+  assert.match(out, /africa-south1: 0 instances reserving 0 vCPU · 0 MB of 1\.75 vCPU · 3\.5 GB on 1 host online/);
+});
+
+test('8.4.1 the Platform screen shows a region\'s ingress: its address, the platform domain and custom domains waiting for DNS', async () => {
+  const app = await startApp({ seed: true, platform: { enabled: true, domain: 'nooblyjs.app' }, agents: { checkMs: 0 } });
+  apps.push(app);
+  const by = { id: 'stevie', name: 'Stevie' };
+  await app.hosted.pools.create({ name: 'web', account: 'stevie-prod', region: 'africa-south1', size: 'medium', min: 1, max: 2 }, by);
+  await app.hosted.pools.create({ name: 'edge', purpose: 'ingress', account: 'stevie-prod', region: 'africa-south1', size: 'small', min: 1, max: 1 }, by);
+  await app.hosted.idle();
+  await app.hosted.services.platform.workloads.create('acme', {
+    name: 'shop', kind: 'service', region: 'africa-south1', source: { repo: 'https://github.com/acme/shop' }, run: { port: 3000 },
+    plan: { cpu: 0.25, memoryMb: 256 }, instances: 1, healthCheck: { path: '/' }, domains: ['shop.acme.example'],
+  }, { actor: { id: 'stevie', kind: 'person' } });
+  await app.hosted.idle();
+  await app.hosted.runJob('ingress-domains');
+  const [address] = await app.hosted.ingress.addresses('africa-south1');
+  const { out } = await draw(app);
+  for (const text of ['Ingress · africa-south1', '1 VM online · *.nooblyjs.app', address, '*.nooblyjs.app, wildcard certificate by DNS-01', 'shop.acme.example', 'Waiting for DNS', 'Ingress', 'edge-1']) {
+    assert.ok(out.includes(escapeHtml(text)), `the page says "${text}"`);
+  }
+  assert.match(out, /1 site to edge-1/);
 });

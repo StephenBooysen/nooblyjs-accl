@@ -13,7 +13,7 @@ const HOSTNAME = /^(?=.{1,253}$)([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?\.)+[a-z]{2,6
 const LINKS = ['database', 'keyvalue', 'bucket'];
 
 /** What update() may change; name, kind, region and account are fixed once a workload exists. */
-export const CHANGEABLE = ['source', 'build', 'run', 'plan', 'instances', 'healthCheck', 'domains', 'autoDeploy', 'schedule'];
+export const CHANGEABLE = ['source', 'build', 'run', 'plan', 'instances', 'healthCheck', 'domains', 'autoDeploy', 'schedule', 'sleep'];
 /** Changes that need a new build and rollout; plan and instances need only a rolling restart (scale). */
 export const REDEPLOY = ['source', 'build', 'run'];
 export const RESCALE = ['plan', 'instances'];
@@ -112,6 +112,8 @@ export function checkSpec(input, { regions }) {
         if (given.length !== 1) return bad(at, 'Exactly one of value, secretRef or link.');
         if (e.value !== undefined && !text(e.value, 32_768)) return bad(at, 'A value is text, up to 32 KB.');
         if (e.secretRef !== undefined && !text(e.secretRef, 200)) return bad(at, 'The launcher\'s secret reference.');
+        if (e.build !== undefined && typeof e.build !== 'boolean') return bad(at, 'build is true (also available while building, spec 8.3 R5) or false.');
+        if (e.build && e.link !== undefined) return bad(at, 'A linked value is not available while building.');
         if (e.link !== undefined && !(isObject(e.link) && Object.keys(e.link).length === 1 && LINKS.includes(Object.keys(e.link)[0]) && text(Object.values(e.link)[0], 100))) {
           return bad(at, `A link names one ${LINKS.join(', ')}.`);
         }
@@ -162,6 +164,16 @@ export function checkSpec(input, { regions }) {
     }
   }
 
+  // Idle sleep (spec 8.4.8): a web service with no request through its region's ingress for afterMin minutes stops its
+  // instances; the next request wakes it. Other kinds never sleep (nothing in front of them holds a request).
+  const sl = input.sleep ?? null;
+  let sleep = null;
+  if (sl !== null) {
+    if (kind !== 'service') bad('sleep', 'Only a web service sleeps: it has an ingress in front of it to hold the next request.');
+    else if (!isObject(sl) || !Number.isInteger(sl.afterMin) || sl.afterMin < 5 || sl.afterMin > 1440) bad('sleep.afterMin', 'From 5 to 1440 minutes.');
+    else sleep = { afterMin: sl.afterMin };
+  }
+
   // A job's schedule is kept by the launcher (spec 8.1, R3); it is stored so the Platform screen can show it.
   const schedule = input.schedule ?? null;
   if (schedule !== null && (kind !== 'job' || !text(schedule, 100))) bad('schedule', kind === 'job' ? 'Up to 100 characters.' : 'Only a job has a schedule.');
@@ -171,7 +183,7 @@ export function checkSpec(input, { regions }) {
   }
   return {
     name: input.name, kind, region, account, source, build, run, plan: { cpu: plan.cpu, memoryMb: plan.memoryMb }, instances,
-    healthCheck, domains: [...domains], autoDeploy, ...(kind === 'job' ? { schedule } : {}),
+    healthCheck, domains: [...domains], autoDeploy, sleep, ...(kind === 'job' ? { schedule } : {}),
   };
 }
 

@@ -23,6 +23,13 @@ import { createJobs } from './src/services/jobs.js';
 import { createCost } from './src/services/cost.js';
 import { createSshKeys } from './src/services/ssh-keys.js';
 import { createVms } from './src/services/vms.js';
+import { createEndpoints } from './src/services/endpoints.js';
+import { createDns } from './src/services/dns.js';
+import { createGit } from './src/services/git.js';
+import { createApps } from './src/services/apps.js';
+import { createPools } from './src/platform/pools.js';
+import { createIngress } from './src/platform/ingress.js';
+import { hookRoutes, gitHookRoutes, HOOKS_PUBLIC, GIT_HOOKS_PREFIX } from './src/routes/hooks.js';
 import { createRemote } from './src/remote/index.js';
 import { createSummary } from './src/services/summary.js';
 import { withWords } from './src/services/event-words.js';
@@ -87,6 +94,10 @@ const envNumber = (name, fallback) => (process.env[name] === undefined || proces
  *   real agent as a child process (Docker on this machine), 'mock' an in-process one (tests). Needs host.onUpgrade.
  * @param {{ verify?: Function, checkMs?: number, offlineAfterMs?: number, heartbeatMs?: number }} [options.agents]
  *   local servers' agent channel (spec 8.9); on when the host offers onUpgrade. Tests override verify and the timings.
+ * @param {string} [options.publicUrl]  the https:// address cloud VMs reach this app on (INFRA_PUBLIC_URL wins): pool
+ *   hosts' agents connect to it and ingress VMs call its hooks (specs 8.2, 8.4)
+ * @param {{ mock?: boolean, fetch?: typeof fetch }} [options.git]  Git hosts (roadmap 6.1): `mock` answers the seed story's
+ *   repositories without the network (on outside production unless INFRA_GIT_MOCK=0); tokens starting mock_ always do
  * @returns {Promise<object>} the HostedApp description, with shutdown()
  */
 export async function mount(app, eventEmitter, serviceRegistry, {
@@ -96,6 +107,8 @@ export async function mount(app, eventEmitter, serviceRegistry, {
   platform: platformOption = {},
   agents: agentOptions = {},
   local: localOption = {},
+  publicUrl: publicUrlOption = null,
+  git: gitOption = {},
 } = {}) {
   // Check everything before mounting anything, so a failed start leaves nothing half-mounted (architecture.md §3.1).
   if (typeof app?.use !== 'function') throw new Error("nooblyjs-accelerator-infrastructure needs the launcher's Express app.");
@@ -141,9 +154,16 @@ export async function mount(app, eventEmitter, serviceRegistry, {
   const accounts = createAccounts({ repos, host, operations, providers, secrets, catalog, config, now, log });
   const sync = createSync({ repos, operations, providers, config, host, log, now });
   const cost = createCost({ repos, catalog, store: host.store, now });
-  const remote = createRemote({ providers, secrets, config, catalog, repos });
+  const dns = createDns({ store: host.store });
+  // The address cloud VMs and Git hosts reach this app on: pool hosts' agents, ingress hooks, apps' webhooks.
+  const publicUrl = (process.env.INFRA_PUBLIC_URL || publicUrlOption || '').replace(/\/+$/, '');
+  const gitMock = gitOption.mock ?? (process.env.INFRA_GIT_MOCK ? process.env.INFRA_GIT_MOCK === '1' : process.env.NODE_ENV !== 'production');
+  const git = createGit({ repos, host, secrets, mock: gitMock, ...(gitOption.fetch ? { fetchImpl: gitOption.fetch } : {}), now, log });
+  const remote = createRemote({ providers, secrets, config, catalog, repos, dns, git: () => git.mockHost });
   const sshKeys = createSshKeys({ repos, host, now });
-  const vms = createVms({ repos, host, operations, providers, remote, sshKeys, catalog, config, cost, now, log });
+  const endpoints = createEndpoints({ repos, host, operations, providers, remote, dns, secrets, now, log });
+  const vms = createVms({ repos, host, operations, providers, remote, sshKeys, catalog, config, cost, now, log, endpoints, secrets });
+  const apps = createApps({ repos, host, operations, remote, endpoints, git, secrets, publicUrl: () => publicUrl || null, mountPath, now, log });
   const summary = createSummary({ repos, accounts, activity, cost });
   // The platform layer (spec 8.1): its operation types, records, routes and job exist only when the launcher asks.
   // Local servers (spec 8.9): their records and the agent hub, when the launcher can pass WebSocket upgrades and runs
@@ -177,11 +197,46 @@ export async function mount(app, eventEmitter, serviceRegistry, {
   platform = platformOn
     ? createPlatform({
       store: host.store, host, operations, config, catalog, log, now, mockStepMs, workloadsPerTenant: envNumber('INFRA_WORKLOADS_PER_TENANT', 100),
-      local: localServers ? { servers: localServers, hub: agents, statsEveryS: localOption.statsEveryS, drainMs: localOption.drainMs } : null,
+      local: localServers ? { servers: localServers, hub: agents, statsEveryS: localOption.statsEveryS, drainMs: localOption.drainMs, poolDrainMs: localOption.poolDrainMs } : null,
       resolveSecrets: platformOption.resolveSecrets,
       emitRaw: (type, payload) => eventEmitter.emit(type, payload),
     })
     : null;
+  // Host pools (spec 8.2): a cloud region's shared VMs, each running the agent, on the same runtime as local servers.
+  const pools = platform?.localRuntime && localServers && agents ? createPools({
+    store: host.store, host, repos, operations, catalog, secrets, servers: localServers, hub: agents, runtime: platform.localRuntime, providers, config,
+    addRegion: (region) => platform.addLocalSite(region), removeRegion: (region) => platform.removeLocalSite(region), controller: () => (publicUrl ? `${publicUrl}${mountPath}` : null), now, log,
+  }) : null;
+  // Ingress (spec 8.4): a region's ingress pool serves its web workloads under the platform domain and custom domains.
+  const platformDomain = (process.env.INFRA_PLATFORM_DOMAIN || platformOption.domain || '').trim().toLowerCase() || null;
+  const ingressAccount = async (region) => {
+    const p = (await pools.records()).find((x) => x.purpose === 'ingress' && x.region === region);
+    return p ? repos.accounts.get(p.account) : null;
+  };
+  const ingress = pools ? createIngress({
+    store: host.store, servers: localServers, hub: agents, runtime: platform.localRuntime,
+    ingressPools: async () => (await pools.records()).filter((p) => p.purpose === 'ingress'),
+    vm: (name) => repos.vms.get(name),
+    workloads: (region) => platform.allWorkloads(region),
+    dnsFor: async (region) => dns.forAccount(await ingressAccount(region)),
+    platformDomain,
+    // The wildcard certificate's DNS-01 challenge goes to the region's cloud DNS (INFRA_PLATFORM_DNS_ZONE: the GCP
+    // project that holds the zone, or the Route 53 hosted zone id).
+    wildcardFor: async (region) => {
+      const account = await ingressAccount(region);
+      if (!account) return null;
+      const zone = (process.env.INFRA_PLATFORM_DNS_ZONE || '').trim();
+      return account.cloud === 'aws' ? { provider: 'route53', ...(zone ? { zone } : {}) } : { provider: 'googleclouddns', ...(zone ? { project: zone } : {}) };
+    },
+    hooksBase: () => (publicUrl ? `${publicUrl}${mountPath}` : null),
+    emit: (type, payload) => host.events.emit(type, payload, { actor: null }),
+    now, log,
+  }) : null;
+  if (ingress) {
+    platform.localRuntime.setIngress(ingress);
+    platform.setOnChanged((tenantId, name) => ingress.syncWorkload(tenantId, name));
+    platform.setIngress(ingress);
+  }
   // Spec 8.9.4: a local site through the provider contract (its servers as VMs, metrics from the agent's stats).
   const localProvider = localServers && agents
     ? (site) => checkProvider(createLocalProvider({ site, servers: localServers, hub: agents, runtime: platform?.localRuntime ?? null }))
@@ -195,6 +250,20 @@ export async function mount(app, eventEmitter, serviceRegistry, {
       { name: 'account-check', every: 15 * 60_000, run: () => accounts.checkAll() },
       { name: 'inventory', every: () => sync.every(), run: () => sync.inventory() },
       { name: 'cost-snapshot', every: 60 * 60_000, run: () => cost.accrue() },
+      // Roadmap 3.3 and 3.5: domains waiting for their DNS record, and the certificates Caddy holds.
+      { name: 'endpoint-dns', every: () => endpoints.dnsEvery(), run: () => endpoints.checkDns() },
+      { name: 'endpoint-certs', every: () => endpoints.certsEvery(), run: () => endpoints.checkCerts() },
+      // Roadmap 6.1 and 6.5: Git tokens checked daily; apps' containers read for crashes.
+      { name: 'git-check', every: 24 * 3600_000, run: () => git.checkAll() },
+      { name: 'app-containers', every: 5 * 60_000, run: () => apps.checkContainers() },
+      // Spec 8.3 R6: the registry keeps each workload's last five images (and any still running).
+      ...(pools ? [{ name: 'image-retention', every: 24 * 3600_000, run: () => platform.localRuntime.retainImages() }] : []),
+      // Spec 8.4: custom domains waiting for their DNS, traffic counters from the ingress VMs, and idle services asleep.
+      ...(ingress ? [
+        { name: 'ingress-domains', every: 60_000, run: () => ingress.checkDomains() },
+        { name: 'ingress-traffic', every: 60_000, run: () => ingress.collect() },
+        { name: 'idle-sleep', every: 60_000, run: () => platform.sleepIdle(async (t, n) => (await ingress.traffic(t, n, { hours: 48 })).lastRequestAt, { canWake: (region) => ingress.has(region) }) },
+      ] : []),
       ...(platform ? [{ name: 'platform-inventory', every: () => sync.every(), run: () => platform.inventory() }] : []),
       // Spec 8.9 R7: instances on a server offline for 5 minutes start again elsewhere in its site.
       ...(platform?.localRuntime ? [{ name: 'local-replace', every: localOption.replaceEveryMs ?? 30_000, run: () => platform.localRuntime.replaceLost({ afterMs: localOption.replaceAfterMs ?? REPLACE_AFTER_MS }) }] : []),
@@ -213,6 +282,8 @@ export async function mount(app, eventEmitter, serviceRegistry, {
       remote.forget();
       platform?.runtime.reset();
       await accounts.seedCredentials();
+      await git.seedTokens();
+      await apps.seedSecrets();
     }
     return result;
   };
@@ -220,8 +291,12 @@ export async function mount(app, eventEmitter, serviceRegistry, {
   const router = host.express.Router();
   // install.sh and the agent's files, without a sign-in (spec 8.9 R2): only when local servers are on.
   if (localServers) router.use(agentFileRoutes({ host, mountPath }));
+  // Caddy's on-demand TLS question and a sleeping service's wake-up (spec 8.4), without a sign-in.
+  if (ingress) router.use(hookRoutes({ host, ingress, wake: (t, n, o) => platform.services.workloads.wake(t, n, o) }));
+  // Apps' push webhooks (architecture.md §9 "Auto-deploy"), before any sign-in: the signature is the proof.
+  router.use(gitHookRoutes({ host, apps }));
   router.use('/api/v1', createApi({
-    host, log, seed, summary, accounts, operations, activity, catalog, cost, vms, sshKeys, platform,
+    host, log, seed, summary, accounts, operations, activity, catalog, cost, vms, sshKeys, platform, endpoints, pools, ingress, apps, git,
     local: localServers && agents ? { servers: localServers, hub: agents } : null, mountPath,
     about: { name: NAME, version: VERSION, mountPath, providers: enabled },
   }));
@@ -244,7 +319,8 @@ export async function mount(app, eventEmitter, serviceRegistry, {
   }
   if (localServers) {
     if (localOption.site) await localServers.ensureSite(localOption.site);
-    for (const site of await localServers.sites()) platform.addLocalSite(site.id);
+    for (const site of (await localServers.sites()).filter((s) => s.mode !== 'pool')) platform.addLocalSite(site.id);
+    await pools?.start();
     if (localOption.agent && localOption.site) localAgent = await startLocalAgent({ kind: localOption.agent, site: localOption.site.id, controller: localOption.controller, dataDir, localServers, agents, log });
   }
 
@@ -257,10 +333,14 @@ export async function mount(app, eventEmitter, serviceRegistry, {
     closing ??= (async () => {
       stopping = true;
       localAgent?.stop();
+      pools?.stop();
       if (typeof stopUpgrades === 'function') stopUpgrades();
       await agents?.close();
       await jobs.close();
       await operations.close();
+      // Work started in the background (ingress syncs, old images going) finishes before the store goes.
+      await ingress?.close();
+      await platform?.localRuntime?.settle();
     })();
     return closing;
   };
@@ -272,7 +352,9 @@ export async function mount(app, eventEmitter, serviceRegistry, {
     icon: 'globe',
     mountPath,
     /** Paths under mountPath that answer without a sign-in (the agent's downloads); a gating launcher lets these through. */
-    publicPaths: localServers ? [...AGENT_PUBLIC] : [],
+    publicPaths: [...(localServers ? AGENT_PUBLIC : []), ...(ingress ? HOOKS_PUBLIC : [])],
+    /** POSTs under mountPath that answer without a sign-in: apps' push webhooks (signed). A gating launcher lets them through. */
+    publicPostPrefixes: [GIT_HOOKS_PREFIX],
     ui: { entry: 'js/module.js', styles: ['css/infrastructure.css'] },
     nav: platform ? [...NAV, PLATFORM_NAV] : NAV,
     /** The sidebar's status card: the cloud accounts and their state (product.md §5). */
@@ -291,18 +373,32 @@ export async function mount(app, eventEmitter, serviceRegistry, {
     resume: () => operations.recover(),
     /** The local servers' agent channel (spec 8.9), or null when the launcher cannot pass upgrades. */
     agents,
+    /** Host pools (spec 8.2), or null without the platform layer and local servers. */
+    pools,
     /** Local servers (spec 8.9): their records and the development agent, when on. */
     local: localServers ? { servers: localServers, runtime: platform?.localRuntime ?? null, provider: localProvider, get agent() { return localAgent; } } : null,
     /** For the tests: resolves when no operation is queued or running. */
     idle: () => operations.idle(),
     /** For the tests and a person in a hurry: run a job now ('account-check', 'inventory'). */
     runJob: (name) => jobs.run(name),
-    /** For the tests and demos: the mock cloud of an account (failAt, outOfBand, resources). */
+    /** For the tests and demos: the mock Git host (push(), hooks()). */
+    mockGit: () => git.mockHost,
     /** For the tests and demos, with the platform on: the mock workload runtime (failAt, list, outOfBand). */
     ...(platform ? { mockRuntime: () => platform.runtime } : {}),
+    /** For the tests and demos: the mock DNS (set(host, ['203.0.113.5']) or set(host, { cname })). */
+    mockDns: dns.mock,
+    /** For the tests and demos: the mock cloud of an account (failAt, outOfBand, resources). */
     mockCloud: async (accountId) => {
       const account = await repos.accounts.get(accountId);
       return account ? providers.mockCloud(account) : null;
+    },
+    /** For the tests: the ingress (spec 8.4) and the platform layer's jobs. */
+    ingress,
+    ...(platform ? { platformLayer: platform } : {}),
+    /** For the tests: an account's provider (the mock registry's side of a push and a pull). */
+    provider: async (accountId) => {
+      const account = await repos.accounts.get(accountId);
+      return account ? providers.forAccount(account) : null;
     },
   };
 }

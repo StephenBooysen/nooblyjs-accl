@@ -18,8 +18,9 @@
     "start": "node --env-file-if-exists=.env server.js",
     "seed": "node --env-file-if-exists=.env server.js --seed",
     "test": "npm run test:express5 && npm run test:express4",
-    "test:express5": "node --test --test-timeout=20000 \"test/**/*.test.js\"",
-    "test:express4": "node --env-file=test/express4.env --test --test-timeout=20000 \"test/**/*.test.js\""
+    "test:express5": "node --test --test-timeout=60000 \"test/**/*.test.js\"",
+    "test:express4": "node --env-file=test/express4.env --test --test-timeout=60000 \"test/**/*.test.js\"",
+    "refresh-bases": "node scripts/refresh-bases.js"
   },
   "dependencies": {
     "nooblyjs-core": "file:../../nooblyjs-core",

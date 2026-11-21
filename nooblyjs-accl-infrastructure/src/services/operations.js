@@ -44,7 +44,11 @@ export function createOperations({ repos, host, log, queue, providers, secrets, 
   let closed = false;
 
   const iso = () => new Date(now()).toISOString();
-  const line = (text) => `${iso()}  ${secrets.scrub(text)}\n`;
+  /** Log lines, each with the time (a build's output arrives in batches of lines). */
+  const line = (text) => {
+    const at = iso();
+    return String(secrets.scrub(text)).split('\n').filter((l, i, all) => l || i < all.length - 1).map((l) => `${at}  ${l}\n`).join('');
+  };
   const emit = (type, payload, actor) => host.events.emit(type, payload, { actor: actor ?? null });
   const facts = (op) => ({
     operationId: op.id, type: op.type, label: op.label, resource: op.resource, account: op.account ?? null,

@@ -28,6 +28,28 @@ test('arguments are single-quoted words, whatever they hold; only our scripts ca
   assert.throws(() => scriptText('../../etc/passwd'), /No remote script/);
 });
 
+test('a host pool VM\'s first boot (spec 8.2): no person\'s key, the agent enrolled with its token, user namespaces on, no Caddy', () => {
+  const control = utils.generateKeyPairSync('ed25519').public;
+  const agent = { controller: 'https://cloud.example.com/infrastructure', token: `enr_${'a'.repeat(43)}` };
+  const config = JSON.parse(cloudInit({ personKey: null, controlKey: control, docker: true, proxy: false, agent }).slice('#cloud-config\n'.length));
+  assert.equal(config.ssh_authorized_keys, undefined);
+  assert.deepEqual(config.packages, ['docker.io']);
+  const daemon = config.write_files.find((f) => f.path === '/etc/docker/daemon.json');
+  assert.deepEqual(JSON.parse(daemon.content), { 'userns-remap': 'default', 'live-restore': true, 'log-driver': 'local', 'log-opts': { 'max-size': '20m', 'max-file': '3' } });
+  assert.notEqual(daemon.defer, true, 'Docker must start with it');
+  const install = config.runcmd.find((c) => c[0] === 'bash');
+  assert.match(install[2], /curl -fsSL --retry 5 'https:\/\/cloud\.example\.com\/infrastructure\/agent\/install\.sh' \| bash -s -- --token 'enr_a{43}' --controller 'https:\/\/cloud\.example\.com\/infrastructure' --install-node$/);
+  assert.ok(config.runcmd.findIndex((c) => c[0] === 'bash') < config.runcmd.findIndex((c) => c[0] === 'touch'), 'ready only after the agent is installed');
+  assert.throws(() => cloudInit({ personKey: null, controlKey: control, agent: { ...agent, controller: "https://x.example.com'; rm -rf /" } }), /controller/);
+  assert.throws(() => cloudInit({ personKey: null, controlKey: control, agent: { ...agent, token: 'nope' } }), /enrolment token/);
+  assert.throws(() => cloudInit({ personKey: null, controlKey: control }), /person's key/, 'an ordinary VM still needs one');
+  // An ingress pool's VM (spec 8.4): Caddy too, resuming the config its agent loads.
+  const edge = JSON.parse(cloudInit({ personKey: null, controlKey: control, docker: true, proxy: true, agent }).slice('#cloud-config\n'.length));
+  assert.ok(edge.packages.includes('caddy'));
+  assert.match(edge.write_files.find((f) => f.path === '/etc/systemd/system/caddy.service.d/noobly-ingress.conf').content, /caddy run --environ --resume/);
+  assert.ok(edge.runcmd.some((c) => c.join(' ') === 'systemctl daemon-reload'));
+});
+
 test('first boot: the person\'s key on the default user, the control key on noobly, Docker when asked, and a ready marker', () => {
   const control = utils.generateKeyPairSync('ed25519').public;
   const text = cloudInit({ personKey: PERSON, controlKey: control, docker: true, packages: 'apt' });
@@ -36,13 +58,16 @@ test('first boot: the person\'s key on the default user, the control key on noob
   assert.deepEqual(config.ssh_authorized_keys, [PERSON]);
   assert.deepEqual(config.users[1].ssh_authorized_keys, [control.trim()]);
   assert.equal(config.users[1].name, 'noobly');
-  assert.deepEqual(config.packages, ['docker.io']);
+  assert.deepEqual(config.packages, ['docker.io', 'caddy', 'jq']);
+  assert.match(config.write_files[0].content, /import \/etc\/caddy\/sites\/\*\.caddy/);
+  assert.equal(config.write_files[0].defer, true, 'written after the caddy package, so ours stays');
   assert.deepEqual(config.runcmd.at(-1), ['touch', '/var/lib/noobly/ready']);
   assert.equal(config.ssh_pwauth, false);
   const rocky = JSON.parse(cloudInit({ personKey: PERSON, controlKey: control, packages: 'dnf' }).slice(14));
   assert.ok(rocky.runcmd.some((c) => c.includes('docker-ce')));
   const bare = JSON.parse(cloudInit({ personKey: PERSON, controlKey: control, docker: false }).slice(14));
-  assert.deepEqual(bare.packages, []);
+  assert.deepEqual(bare.packages, ['caddy', 'jq']);
+  assert.deepEqual(JSON.parse(cloudInit({ personKey: PERSON, controlKey: control, docker: false, proxy: false }).slice(14)).packages, []);
   assert.ok(!bare.runcmd.flat().includes('docker'));
   assert.throws(() => cloudInit({ personKey: `${PERSON}\nruncmd: [rm]`, controlKey: control }), /not an SSH public key/);
   assert.throws(() => cloudInit({ personKey: '-----BEGIN OPENSSH PRIVATE KEY-----', controlKey: control }), /not an SSH public key/);

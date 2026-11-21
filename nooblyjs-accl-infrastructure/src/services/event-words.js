@@ -5,7 +5,7 @@
 // progress) are emitted but not kept.
 
 export const CLOUD = { gcp: 'GCP', aws: 'AWS' };
-const KIND = { vm: 'VM', app: 'app', database: 'database', bucket: 'bucket', account: 'account', workload: 'workload' };
+const KIND = { vm: 'VM', app: 'app', database: 'database', bucket: 'bucket', account: 'account', workload: 'workload', git: 'Git connection' };
 const cloudOf = (p) => CLOUD[p.cloud] ?? p.cloud ?? 'the cloud';
 const resourceOf = (p) => `${KIND[p.resource?.type] ?? p.resource?.type ?? 'resource'} ${p.resource?.name ?? ''}`.trim();
 
@@ -55,12 +55,46 @@ const WORDS = {
   'infrastructure.vm.restarted': { verb: 'Restarted', tone: 'success', text: (p) => `VM ${p.name}` },
   'infrastructure.vm.stopped': { verb: 'Stopped', tone: 'neutral', text: (p) => `VM ${p.name}` },
   'infrastructure.vm.deleted': { verb: 'Deleted', tone: 'neutral', text: (p) => `VM ${p.name}` },
+  // Public HTTPS endpoints (roadmap phase 3). Their resource is the VM they are on.
+  'infrastructure.endpoint.added': { verb: 'Added', tone: 'success', text: (p) => `endpoint ${p.host}${p.path && p.path !== '/' ? p.path : ''} on ${p.vm}` },
+  'infrastructure.endpoint.changed': { verb: 'Changed', tone: 'neutral', text: (p) => `endpoint ${p.host}${p.path && p.path !== '/' ? p.path : ''} on ${p.vm}` },
+  'infrastructure.endpoint.removed': { verb: 'Removed', tone: 'neutral', text: (p) => `endpoint ${p.host}${p.path && p.path !== '/' ? p.path : ''} from ${p.vm}` },
+  'infrastructure.endpoint.dns_verified': {
+    verb: 'Verified', tone: 'success',
+    text: (p) => `DNS for ${p.host} points at ${p.vm}`,
+    summary: (p) => `saw the DNS record for ${p.host} point at ${p.vm}`,
+  },
+  'infrastructure.endpoint.certificate': {
+    verb: 'Certificate', tone: 'success',
+    text: (p) => `${p.host} has a Let’s Encrypt certificate${p.expiresAt ? ` until ${String(p.expiresAt).slice(0, 10)}` : ''}`,
+    summary: (p) => `saw Let’s Encrypt issue a certificate for ${p.host}`,
+  },
   'infrastructure.app.building': {
     verb: 'Building', tone: 'warning',
     text: (p) => `${p.app} ${p.commit} on ${p.vm}`,
     summary: (p) => `started building ${p.app} ${p.commit} on ${p.vm}`,
   },
   'infrastructure.app.deployed': { verb: 'Deployed', tone: 'success', text: (p) => `${p.app} ${p.commit} to ${p.vm}` },
+  'infrastructure.app.created': { verb: 'Created', tone: 'info', text: (p) => `app ${p.app} from ${p.repo} on ${p.vm}` },
+  'infrastructure.app.deploy_failed': {
+    verb: 'Failed', tone: 'danger',
+    text: (p) => `${p.app}${p.commit ? ` ${p.commit}` : ''} on ${p.vm}: ${p.reason}`,
+    summary: (p) => `could not deploy ${p.app}${p.commit ? ` ${p.commit}` : ''} to ${p.vm}: ${p.reason}`,
+  },
+  'infrastructure.app.stopped': { verb: 'Stopped', tone: 'neutral', text: (p) => `${p.app} on ${p.vm}` },
+  'infrastructure.app.deleted': { verb: 'Deleted', tone: 'neutral', text: (p) => `app ${p.app} from ${p.vm}` },
+  'infrastructure.app.crashed': {
+    verb: 'Crashed', tone: 'danger',
+    text: (p) => `${p.app} on ${p.vm}: ${p.reason}`,
+    summary: (p) => `found ${p.app} crashed on ${p.vm} (${p.reason})`,
+  },
+  'infrastructure.git.connected': { verb: 'Connected', tone: 'success', text: (p) => `${p.label ?? p.provider} as ${p.user}` },
+  'infrastructure.git.needs_attention': {
+    verb: 'Attention', tone: 'danger',
+    text: (p) => `Git connection ${p.resource?.name}: ${p.reason}`,
+    summary: (p) => `found that the Git connection ${p.resource?.name} needs attention: ${p.reason}`,
+  },
+  'infrastructure.git.removed': { verb: 'Removed', tone: 'neutral', text: (p) => `Git connection ${p.resource?.name}` },
   'infrastructure.database.created': { verb: 'Created', tone: 'info', text: (p) => `database ${p.name} · ${cloudOf(p)} ${p.region}` },
   'infrastructure.database.backed_up': {
     verb: 'Backup', tone: 'success',
@@ -79,7 +113,18 @@ const WORDS = {
       stuck: `${p.workload} for ${p.tenantId}: ${p.instance} could not move off ${p.server}: ${p.reason}`,
     })[p.change] ?? `${p.workload} for ${p.tenantId}: ${p.change}`,
   },
+  'infrastructure.instance.crashed': {
+    verb: 'Crashed', tone: 'danger',
+    text: (p) => `${p.workload} for ${p.tenantId}: ${p.instance} exited${p.exitCode !== null && p.exitCode !== undefined ? ` with code ${p.exitCode}` : ''}${p.gaveUp ? ' and was not restarted again (5 restarts)' : `; restarted (${p.restarts} of 5)`}`,
+    summary: (p) => `saw ${p.instance} of ${p.workload} exit${p.gaveUp ? ' for good' : ''}`,
+  },
+  // Host pools (spec 8.2): the shared VMs a region's instances run on.
+  'infrastructure.pool.created': { verb: 'Created', tone: 'info', text: (p) => `host pool ${p.pool} in ${p.region} (${p.min}–${p.max} hosts)` },
+  'infrastructure.pool.grown': { verb: 'Added', tone: 'success', text: (p) => `host ${p.vm} to pool ${p.pool}` },
+  'infrastructure.pool.drained': { verb: 'Drained', tone: 'neutral', text: (p) => `host ${p.vm} of pool ${p.pool}${p.moved ? ` (${p.moved} instance${p.moved === 1 ? '' : 's'} moved)` : ''}` },
+  'infrastructure.pool.deleted': { verb: 'Deleted', tone: 'neutral', text: (p) => `host pool ${p.pool}` },
   'infrastructure.workload.deleted': { verb: 'Deleted', tone: 'neutral', text: (p) => `${p.workload} for ${p.tenantId}` },
+  'infrastructure.workload.domain_verified': { verb: 'Verified', tone: 'success', text: (p) => `${p.domain} for ${p.workload} of ${p.tenantId}: its DNS points at the ingress` },
   'infrastructure.workload.status': {
     verb: 'Status', tone: 'neutral',
     text: (p) => `${p.workload} for ${p.tenantId} is ${p.status}`,

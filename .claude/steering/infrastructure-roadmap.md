@@ -81,12 +81,15 @@ Goal: launch, see and run Linux VMs, first on mock, then on GCP, then on AWS.
 - [x] 2.2 `vm.launch`, `vm.start`, `vm.stop`, `vm.restart`, `vm.delete` steps; static IP, firewall/security group, labels.
 - [x] 2.3 Form components: `formSection`, `optionCards`, `switchRow`, `summary`; `forms.js`; shared `names.js`.
 - [x] 2.4 **Virtual machines** page (`VirtualMachines.dc.html`): cloud chips, search (in the URL), table, statuses, actions menu, info band.
-- [x] 2.5 **Launch a Linux VM** page (`LaunchVM.dc.html`): five sections, live summary and estimate, SSH keys (saved or pasted), "My IP only" (`GET /my-ip`, honours `trust proxy`), 422 field errors. Section 5 says public endpoints arrive in phase 3.
+- [x] 2.5 **Launch a Linux VM** page (`LaunchVM.dc.html`): five sections, live summary and estimate, SSH keys (saved or pasted), "My IP only" (`GET /my-ip`, honours `trust proxy`), 422 field errors. Section 5 (the public endpoint) came with phase 3.
 - [x] 2.6 **VM detail** page (`VMDetail.dc.html`): header and actions, Details card, launch progress while starting; Health tiles from mock metrics.
 - [x] 2.7 cloud-init template (§9): `noobly` user, keys, Docker; ready marker; SSH runner (`ssh2`; scripts piped to `bash -s`, host key pinned on first use), tested against an in-process SSH server; a mock runner for mock VMs.
 - [ ] 2.8 **GCP compute adapter**: network `noobly-cloud`, instance, static address, firewall, images, machine types, extra data disks and disk resize, Cloud Monitoring CPU; contract suite passes against a sandbox project.
+  *2026-11-21:* built without the SDK (`src/providers/gcp/`; architecture D3), with everything above except data disks and resize, which are not in the contract yet. Tested against a fake of Google's APIs (`test/providers/gcp.test.js`, 8 tests). Still open: the sandbox project run.
 - [ ] 2.9 **AWS compute adapter**: VPC, EC2, Elastic IP and the public DNS name, security group, AMIs via SSM, EBS data volumes and resize, CloudWatch CPU; contract suite passes against a sandbox account.
+  *2026-11-21:* built without the SDK (`src/providers/aws/`, SigV4 checked against AWS's example), with everything above except EBS data volumes and resize. Rocky Linux has no public SSM parameter, so AWS doesn't offer it yet. Tested against a fake that checks every signature (`test/providers/aws.test.js`, 11 tests). Still open: the sandbox account run.
 - [ ] 2.10 Real account connection for GCP (service account JSON) and AWS (AssumeRole + ExternalId), with a documented least-privilege role for each.
+  *2026-11-21:* both credential forms are read and checked (`INFRA_PROVIDERS=gcp,aws`; AWS assumes the role with this server's `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`). The roles are in `docs/least-privilege.md`. Still open: confirming those lists on a real project and account.
 - [x] 2.11 VM memory/disk health over SSH; 60 s cache.
 - [x] 2.12 Cost snapshot job: accrue each hour at the rate of the state a resource was in (architecture §8, §12).
 
@@ -96,12 +99,12 @@ from the form, sees it go Starting 1→2 of 3 → Running live, SSHes in with th
 
 ## Phase 3 — Public endpoints
 
-- [ ] 3.1 Caddy in cloud-init; one site file per endpoint; HTTP→HTTPS redirect; uploaded certificates (§9).
-- [ ] 3.2 **The cloud's address** (architecture D9): the AWS public DNS name or the GCP static IP; HTTP, plus HTTPS with Caddy `tls internal`; the UI wording that it is self-signed and a domain gives a trusted certificate; several apps on one address by path.
-- [ ] 3.3 **Own domains**: the A record (or AWS CNAME) to add, shown once the IP is reserved; the DNS check job (§8); Let's Encrypt via Caddy.
-- [ ] 3.4 `endpoint.add` operation and the `vm.launch` step 3; ports 80/443 opened on demand.
-- [ ] 3.5 Certificate status and expiry from Caddy; the certificate check job.
-- [ ] 3.6 VM detail **HTTPS endpoints** card (add, edit, remove); endpoint column on the VM list; Overview endpoints card live; "Paused while stopped".
+- [x] 3.1 Caddy in cloud-init; one site file per address (`src/remote/caddy.js`; endpoints on one address share it by path); HTTP→HTTPS redirect; uploaded certificates (checked against the domain and key, kept as a secret, sent over SFTP) (§9).
+- [x] 3.2 **The cloud's address** (architecture D9): the AWS public DNS name or the GCP static IP; HTTP, plus HTTPS with Caddy `tls internal`; the UI wording that it is self-signed and a domain gives a trusted certificate; several apps on one address by path.
+- [x] 3.3 **Own domains**: the A record (or AWS CNAME) to add, shown once the IP is reserved; the DNS check job (§8; public resolvers, the mock DNS in `mock-cloud/dns.yaml` for mock accounts); Let's Encrypt via Caddy.
+- [x] 3.4 `endpoint.add` (and `endpoint.change`, `endpoint.remove`) operations and the `vm.launch` step 3; ports 80/443 opened on demand and closed with the last endpoint; a site Caddy refuses is rolled back.
+- [x] 3.5 Certificate status and expiry from Caddy; the certificate check job.
+- [x] 3.6 VM detail **HTTPS endpoints** card (add, edit, remove); endpoint column on the VM list; Overview endpoints card live; "Paused while stopped".
 
 **Exit check:** on both clouds, a VM launched with the cloud's address answers on `http://<address>` straight away
 (and on HTTPS, self-signed); a VM launched with "my own domain" serves `https://<domain>` with a valid Let's Encrypt
@@ -140,20 +143,21 @@ the other cloud) cannot connect or be chosen; take a backup of each and restore 
 
 ## Phase 6 — Apps (deploy from Git)
 
-- [ ] 6.1 **Git connections** with personal access tokens (architecture D11): GitHub and GitLab; the Owner adds a token on the Accounts page; the token's user, scopes and expiry are checked on save and daily; stored in secrets; used to list repos and create webhooks.
-- [ ] 6.2 `POST /git/check`: read the Dockerfile through the Git host's API; report exposed port and base image.
-- [ ] 6.3 `app.deploy` operation, nine steps, blue/green on one VM, health check gate, streamed build log, deploy history (§9); private clones on the VM through a `GIT_ASKPASS` helper so the token is never on a command line.
-- [ ] 6.4 Env vars: plain, secret, linked to a database (connection string) or bucket (name + grant keys), written to a 0600 env file on the VM.
-- [ ] 6.5 **Deploy an app from Git** page (`DeployApp.dc.html`): source with check result, VM cards with load, run settings, env rows with link buttons, HTTPS endpoint with path and health check, "What happens next".
-- [ ] 6.6 **Apps** page (`Apps.dc.html`): status chips, search, table, Redeploy / View log / Start VM.
-- [ ] 6.7 **App detail** page (needs a design): deploy history, logs (`docker logs` tail), env (secrets hidden), stop, delete.
-- [ ] 6.8 VM detail **Apps on this VM** and **Latest deploy** cards; Overview "Deployed/Building" activity.
-- [ ] 6.9 Auto-deploy webhook (`hooks/git/:app`, mounted before auth, HMAC verified, branch filtered); requires `INFRA_PUBLIC_URL`.
-- [ ] 6.10 Requests per 24 h and 2xx/3xx share from Caddy access logs on VM detail.
+- [x] 6.1 **Git connections** with personal access tokens (architecture D11): GitHub and GitLab; the Owner adds a token on the Accounts page; the token's user, scopes and expiry are checked on save and daily; stored in secrets; used to list repos and create webhooks. *(2026-11-21: `src/services/git.js`, `/git/connections`, the Accounts page's Git connections; the `git-check` job daily. Tests: `test/git.test.js`, the Accounts page test.)*
+- [x] 6.2 `POST /git/check`: read the Dockerfile through the Git host's API; report exposed port and base image. *(Base image of the final stage, its EXPOSE, the branches, the head commit; multi-stage. Test: `test/git.test.js`.)*
+- [x] 6.3 `app.deploy` operation, nine steps, blue/green on one VM, health check gate, streamed build log, deploy history (§9); private clones on the VM through a `GIT_ASKPASS` helper so the token is never on a command line. *(On the mock cloud and the mock Git host: `test/apps.test.js`. The scripts run over SSH unchanged on a real VM; that waits for a cloud account, like 3.6.)*
+- [x] 6.4 Env vars: plain, secret, linked to a database (connection string) or bucket (name + grant keys), written to a 0600 env file on the VM. *(Test: `test/apps.test.js` reads the 0600 file on the mock VM.)*
+- [x] 6.5 **Deploy an app from Git** page (`DeployApp.dc.html`): source with check result, VM cards with load, run settings, env rows with link buttons, HTTPS endpoint with path and health check, "What happens next". *(Data from `GET /apps/-form`. Test: the pages test.)*
+- [x] 6.6 **Apps** page (`Apps.dc.html`): status chips, search, table, Redeploy / View log / Start VM. *(Test: the pages test. The mockup's "4 live on HTTPS" is 3 in the seed: queue-worker has no endpoint.)*
+- [x] 6.7 **App detail** page (needs a design): deploy history, logs (`docker logs` tail), env (secrets hidden), stop, delete. *(Built without a mockup. Test: the pages test.)*
+- [x] 6.8 VM detail **Apps on this VM** and **Latest deploy** cards; Overview "Deployed/Building" activity. *(Test: the pages test.)*
+- [x] 6.9 Auto-deploy webhook (`hooks/git/:app`, mounted before auth, HMAC verified, branch filtered); requires `INFRA_PUBLIC_URL`. *(Redeliveries start nothing. Tests: `test/apps.test.js`; hero-co `test/deploys.test.js` for its gate.)*
+- [x] 6.10 Requests per 24 h and 2xx/3xx share from Caddy access logs on VM detail. *(Test: `test/apps.test.js`.)*
 
 **Exit check:** deploy `storefront` from a private GitHub repo (personal access token) to a VM with a linked database
 in the same cloud and a bucket, reach it on its endpoint, push a commit and watch it rebuild and switch with zero failed requests; push a commit whose health check fails
-and confirm the old version keeps serving.
+and confirm the old version keeps serving. *(Open: every step passes on the mock (`test/apps.test.js`); "zero failed
+requests" needs a real VM taking traffic, so this waits for a cloud account, like 3.6.)*
 
 ## Phase 7 — Beyond v1
 
@@ -188,31 +192,34 @@ tick both).
 
 ### 8.2 Container hosting on shared VMs — [spec](../../nooblyjs-accl-infrastructure/.claude/specs/08.2-container-hosting.md)
 
-- [ ] 8.2.1 Host pools (`role: host` VMs, hidden from the VM list).
-- [ ] 8.2.2 Placement (spread, no over-reservation, full, grow) with unit tests.
-- [ ] 8.2.3 Instance records and `instance.*` steps; CPU/memory limits and hardening flags.
-- [ ] 8.2.4 Tenant networks and `<name>.<tenant>.internal`; cross-tenant isolation test.
-- [ ] 8.2.5 Run-to-completion jobs.
-- [ ] 8.2.6 Crash events, restart counts; suspend/resume.
-- [ ] 8.2.7 `pool.grow` and `host.drain`.
+- [x] 8.2.1 Host pools (`role: host` VMs, hidden from the VM list); each host runs the noobly agent (spec 8.9), so cloud hosts and local servers share one runtime; Platform screen section.
+- [x] 8.2.2 Placement (spread, no over-reservation, full, grow) with unit tests.
+- [x] 8.2.3 Instance records and their steps on the shared runtime; CPU/memory limits and hardening flags; user namespaces on hosts.
+- [x] 8.2.4 Tenant networks and `<name>.<tenant>.internal`; cross-tenant isolation test (on one host).
+- [x] 8.2.5 Run-to-completion jobs (exit code, duration, peak memory; never twice at once).
+- [x] 8.2.6 Crash events, restart counts; suspend/resume.
+- [x] 8.2.7 `pool.grow` and `host.drain`.
+- [ ] 8.2.8 Private names across hosts (R5's cross-host traffic, filtered per tenant).
 
 ### 8.3 Builds and the image registry — [spec](../../nooblyjs-accl-infrastructure/.claude/specs/08.3-builds-and-registry.md)
 
-- [ ] 8.3.1 Runtime templates (Node 22, Python 3.12, Go 1.23) with pinned bases.
-- [ ] 8.3.2 Builder pools and build limits.
-- [ ] 8.3.3 Registry in the provider contract: mock, Artifact Registry, ECR.
-- [ ] 8.3.4 Build steps, streamed and masked log, build-only variables.
-- [ ] 8.3.5 Image retention; prebuilt image source.
+- [x] 8.3.1 Runtime templates (Node 22, Python 3.12, Go 1.23) with pinned bases (shipped with the agent; `npm run refresh-bases`).
+- [x] 8.3.2 Builder pools and build limits.
+- [ ] 8.3.3 Registry in the provider contract: mock (done), Artifact Registry, ECR (with the adapters, 2.8–2.10).
+  *2026-11-21:* both built and tested against the fakes. Pulls use a separate read-only identity. ECR's repository per image is made by the optional `registry.prepare(ref)` before a push. Ticked with 2.8/2.9.
+- [x] 8.3.4 Build steps, streamed and masked log, build-time variables (a BuildKit secret, in no layer).
+- [x] 8.3.5 Image retention; prebuilt image source.
 
 ### 8.4 Instances, ingress and rolling deploys — [spec](../../nooblyjs-accl-infrastructure/.claude/specs/08.4-ingress-and-instances.md)
 
-- [ ] 8.4.1 Ingress pools per region.
-- [ ] 8.4.2 Wildcard certificate (DNS-01 on Cloud DNS / Route 53), shared across ingress VMs.
-- [ ] 8.4.3 Per-workload Caddy sites and `ingress.sync`; active health checks.
-- [ ] 8.4.4 Rolling deploy and scale; failed health check keeps the old version.
-- [ ] 8.4.5 Custom domains with on-demand TLS.
-- [ ] 8.4.6 Host firewall for instance ports.
-- [ ] 8.4.7 Request and bytes-out counters per workload.
+- [x] 8.4.1 Ingress pools per region (static address each; Platform screen card).
+- [ ] 8.4.2 Wildcard certificate (DNS-01 on Cloud DNS / Route 53), shared across ingress VMs. (The Caddy config is rendered and tested; it needs a cloud account, a Caddy with the DNS module, and phase 4's bucket for shared storage.)
+- [x] 8.4.3 Per-workload Caddy sites and `ingress.sync` (Caddy's admin API, from data the agent checks); active health checks.
+- [x] 8.4.4 Rolling deploy and scale; failed health check keeps the old version.
+- [x] 8.4.5 Custom domains with on-demand TLS.
+- [x] 8.4.6 Host firewall for instance ports (from the ingress; same-tenant hosts wait for 8.2.8).
+- [x] 8.4.7 Request and bytes-out counters per workload.
+- [x] 8.4.8 Idle sleep: a web service with `sleep.afterMin` and no requests stops; the next request wakes it.
 
 ### 8.5 Workload telemetry — [spec](../../nooblyjs-accl-infrastructure/.claude/specs/08.5-workload-telemetry.md)
 

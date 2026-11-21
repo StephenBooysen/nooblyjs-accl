@@ -13,6 +13,19 @@ export const CONTRACT = {
   '': ['inventory', 'waitFor'],
 };
 
+/**
+ * Areas a provider may have (spec 8.3.3): with `registry`, a region's builds run on builder VMs and are pushed there,
+ * and hosts pull them; without it they are built on the hosts. ensure(region, { name, labels }) → { host, path };
+ * pushCredentials(region) / pullCredentials(region) → { server, username, password, expiresAt } (pull ones read-only);
+ * list(path) → [{ ref, tag, digest, pushedAt, labels }]; remove(ref).
+ */
+export const OPTIONAL = {
+  registry: ['ensure', 'pushCredentials', 'pullCredentials', 'list', 'remove'],
+};
+
+/** True when the provider has every method of an optional area. */
+export const hasArea = (provider, area) => OPTIONAL[area].every((m) => typeof provider?.[area]?.[m] === 'function');
+
 /** The contract's methods a provider lacks, as 'area.method'. */
 export function missingMethods(provider) {
   const missing = [];

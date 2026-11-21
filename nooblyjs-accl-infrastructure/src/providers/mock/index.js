@@ -141,10 +141,66 @@ export function createMockProvider({ account, credentials, cloud, catalog }) {
     }),
   };
 
+  // The image registry (spec 8.3.3): Artifact Registry's or ECR's host and path style, images kept in the mock state.
+  const registryHost = (id) => (account.cloud === 'aws' ? `${account.accountId ?? '123456789012'}.dkr.ecr.${id}.amazonaws.com` : `${id}-docker.pkg.dev`);
+  const credential = (id, role) => ({
+    server: registryHost(id),
+    username: account.cloud === 'aws' ? 'AWS' : 'oauth2accesstoken',
+    password: `mock-${role}-${mockId('tok').slice(4)}`,
+    expiresAt: new Date(cloud.now() + 3600_000).toISOString(),
+  });
+  const registry = {
+    /** The install's repository in a region, made if absent. */
+    ensure: guard('registry.ensure', async (id, { name, labels = {} } = {}) => {
+      region(id);
+      if (!/^[a-z][a-z0-9-]{1,62}$/.test(name ?? '')) throw new CloudError('invalid', 'A repository name is lower-case letters, digits and hyphens.');
+      const host = registryHost(id);
+      const path = account.cloud === 'aws' ? `${host}/${name}` : `${host}/${account.projectId ?? account.id}/${name}`;
+      return cloud.mutate((state) => {
+        let repo = state.resources.find((r) => r.kind === 'registry' && r.path === path);
+        if (!repo) {
+          repo = { id: mockId('reg'), kind: 'registry', region: id, name, host, path, labels, createdAt: new Date(cloud.now()).toISOString() };
+          state.resources.push(repo);
+        }
+        return { host, path };
+      });
+    }),
+    /** Short-lived credentials that may push (builders). */
+    pushCredentials: guard('registry.pushCredentials', async (id) => credential(region(id).id, 'push')),
+    /** Short-lived, read-only credentials (hosts). */
+    pullCredentials: guard('registry.pullCredentials', async (id) => credential(region(id).id, 'pull')),
+    list: guard('registry.list', async (path) => (await cloud.resources((r) => r.kind === 'image' && r.ref.startsWith(`${path}/`)))
+      .map((r) => ({ ref: r.ref, tag: r.tag, digest: r.digest, pushedAt: r.pushedAt, labels: r.labels }))
+      .sort((a, b) => b.pushedAt.localeCompare(a.pushedAt))),
+    remove: guard('registry.remove', (ref) => cloud.mutate((state) => {
+      const i = state.resources.findIndex((r) => r.kind === 'image' && r.ref === ref);
+      if (i >= 0) state.resources.splice(i, 1);
+      return { ref, removed: i >= 0 };
+    })),
+    /** The mock's side of a push and a pull (the mock agent's Docker calls these): credentials are checked as a registry would. */
+    mock: {
+      owns: (ref) => catalog.regions.some((r) => ref.startsWith(`${registryHost(r.id)}/`)),
+      push: (ref, image, auth) => cloud.mutate((state) => {
+        if (!/^mock-push-/.test(auth?.password ?? '')) throw new Error('denied: these credentials may not push');
+        const repo = state.resources.find((r) => r.kind === 'registry' && ref.startsWith(`${r.path}/`));
+        if (!repo) throw new Error(`name unknown: no repository for ${ref}`);
+        const tag = ref.slice(ref.lastIndexOf(':') + 1);
+        const i = state.resources.findIndex((r) => r.kind === 'image' && r.ref === ref);
+        if (i >= 0) state.resources.splice(i, 1);
+        state.resources.push({ id: mockId('img'), kind: 'image', region: repo.region, ref, tag, digest: image.digest, labels: image.labels ?? {}, pushedAt: new Date(cloud.now()).toISOString() });
+      }),
+      pull: async (ref, auth) => {
+        if (!/^mock-(pull|push)-/.test(auth?.password ?? '')) throw new Error('denied: no credentials for the registry');
+        return (await cloud.resources((r) => r.kind === 'image' && r.ref === ref))[0] ?? null;
+      },
+    },
+  };
+
   return {
     name: 'mock',
     cloud: account.cloud,
     account: account_,
+    registry,
     catalog: {
       machineTypes: guard('catalog.machineTypes', async (zone) => {
         if (!regionOfZone(zone)) throw new CloudError('invalid', `${catalog.short} has no zone ${zone}.`);

@@ -195,3 +195,19 @@
 [data-module="infrastructure"] .inf-summary__usd { font-family: var(--font-display); font-size: 32px; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 [data-module="infrastructure"] .inf-summary__action { width: 100%; margin-top: 12px; }
 [data-module="infrastructure"] .inf-summary__foot { margin: 10px 0 0; text-align: center; font-size: var(--text-caption); color: var(--text-subtle); }
+
+/* Apps (roadmap phase 6): logs, environment rows, what happens next, the Git connections heading. */
+[data-module="infrastructure"] .inf-log { margin: 8px 0 0; padding: 12px 14px; max-height: 420px; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-row); background: var(--surface-sidebar); font-family: var(--font-mono); font-size: var(--text-caption); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
+[data-module="infrastructure"] .inf-log:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+[data-module="infrastructure"] .inf-log__at { display: inline-block; min-width: 9ch; margin-right: 8px; color: var(--text-subtle); user-select: none; }
+[data-module="infrastructure"] .inf-env { border: 0; margin: 0; padding: 0; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+[data-module="infrastructure"] .inf-env__rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+[data-module="infrastructure"] .inf-env__row { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+[data-module="infrastructure"] .inf-env__key { flex: 1 1 180px; min-width: 0; display: flex; flex-direction: column; }
+[data-module="infrastructure"] .inf-env__value { flex: 2 1 260px; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+[data-module="infrastructure"] .inf-env__secret { align-self: flex-start; font-size: var(--text-small); }
+[data-module="infrastructure"] .inf-next { list-style: none; margin: 4px 0 8px; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+[data-module="infrastructure"] .inf-next__step { display: flex; gap: 10px; align-items: flex-start; }
+[data-module="infrastructure"] .inf-next__title { display: block; font-weight: 600; color: var(--text); }
+[data-module="infrastructure"] .inf-subhead { margin-top: 12px; }
+[data-module="infrastructure"] .inf-subhead__title { margin: 0; font-family: var(--font-display); font-size: var(--text-lead); font-weight: 700; color: var(--text); }

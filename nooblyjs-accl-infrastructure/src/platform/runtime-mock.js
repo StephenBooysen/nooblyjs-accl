@@ -142,7 +142,7 @@ export function createMockRuntime({ store, stepMs = 1200, now = () => Date.now()
         s.runs.push({ id: runId, labels, image, command: command ?? null, exitCode: 0, endedAt: iso() });
       });
       await log('Exited with code 0');
-      return { runId, exitCode: 0 };
+      return { runId, exitCode: 0, durationMs: stepMs, peakMemoryMb: null };
     },
 
     /** The containers carrying every label asked for. */

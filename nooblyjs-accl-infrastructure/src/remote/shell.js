@@ -8,6 +8,9 @@ import { fileURLToPath } from 'node:url';
 const DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'scripts');
 export const SCRIPTS = Object.freeze(fs.readdirSync(DIR).filter((f) => f.endsWith('.sh')).map((f) => f.slice(0, -3)));
 
+/** A file name in ~/.noobly/, where files sent over SFTP wait for a script: lower-case letters, digits, dots, - and _. */
+export const isStagedName = (name) => typeof name === 'string' && /^[a-z0-9][a-z0-9._-]{0,200}$/.test(name) && !name.includes('..');
+
 /** One shell word: 'it'\''s' for it's. */
 export const quote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
 

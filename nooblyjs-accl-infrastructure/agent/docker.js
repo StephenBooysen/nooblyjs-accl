@@ -11,9 +11,30 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { caddyConfig, parseMetrics } from './ingress.js';
 
-/** The base images of the runtime templates (8.3.1's pinned bases, by tag for now). */
-export const BASES = { node22: 'node:22-bookworm-slim', python312: 'python:3.12-slim-bookworm', go123: 'golang:1.23-bookworm' };
+/** The runtime templates' base images, pinned by digest (spec 8.3.1; runtimes/bases.json, refreshed by a script). */
+const RUNTIMES_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'runtimes');
+export const BASES = JSON.parse(readFileSync(path.join(RUNTIMES_DIR, 'bases.json'), 'utf8')).bases;
+const TEMPLATES = Object.fromEntries(['node22', 'python312', 'go123'].map((r) => [r, readFileSync(path.join(RUNTIMES_DIR, `${r}.Dockerfile`), 'utf8')]));
+
+/** Each runtime's build and start commands when the service gives none (spec 8.3 Design). */
+export const DEFAULTS = {
+  node22: {
+    build: 'if [ -f package-lock.json ]; then npm ci; else npm install; fi && npm run build --if-present',
+    start: 'npm start',
+  },
+  python312: {
+    build: 'if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi',
+    start: 'if command -v gunicorn >/dev/null 2>&1; then exec gunicorn --bind "0.0.0.0:${PORT:-8000}" app:app; else exec python app.py; fi',
+  },
+  go123: { build: 'go build -o /app/app .', start: '/app/app' },
+};
+
+/** Sources the build-time variables (a BuildKit secret, so in no layer: spec 8.3 R5) for the build command only. */
+const WITH_BUILD_ENV = 'if [ -s /run/secrets/build-env ]; then set -a; . /run/secrets/build-env; set +a; fi; ';
 
 /** A one-line shell command for a Dockerfile's RUN or CMD (protocol.js refuses newlines; this is the second check). */
 const oneLine = (s) => {
@@ -21,48 +42,26 @@ const oneLine = (s) => {
   return s;
 };
 
-/** The Dockerfile for a runtime template (R8). The app runs as an unprivileged user with HOME=/tmp. */
+/**
+ * The Dockerfile for a runtime template (spec 8.3 R1, 8.9 R8): the template's {{slots}} filled with JSON strings, so a
+ * command stays one argument of an exec-form RUN or CMD whatever it contains. The app runs as an unprivileged user.
+ */
 export function dockerfileFor(runtime, { buildCommand, startCommand } = {}) {
-  const build = buildCommand ? oneLine(buildCommand) : null;
-  const start = startCommand ? oneLine(startCommand) : null;
-  const json = (cmd) => JSON.stringify(['/bin/sh', '-c', cmd]);
-  if (runtime === 'node22') {
-    return [
-      `FROM ${BASES.node22}`,
-      'WORKDIR /app',
-      'COPY --chown=node:node . .',
-      `RUN ${json(build ?? 'if [ -f package-lock.json ]; then npm ci; else npm install; fi')}`,
-      'ENV HOME=/tmp NPM_CONFIG_UPDATE_NOTIFIER=false',
-      'USER node',
-      `CMD ${json(start ?? 'npm start')}`,
-      '',
-    ].join('\n');
-  }
-  if (runtime === 'python312') {
-    return [
-      `FROM ${BASES.python312}`,
-      'WORKDIR /app',
-      'COPY . .',
-      `RUN ${json(build ?? 'if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi')}`,
-      'ENV HOME=/tmp PYTHONUNBUFFERED=1',
-      'USER nobody',
-      `CMD ${json(start ?? 'python app.py')}`,
-      '',
-    ].join('\n');
-  }
-  if (runtime === 'go123') {
-    return [
-      `FROM ${BASES.go123}`,
-      'WORKDIR /app',
-      'COPY . .',
-      `RUN ${json(build ?? 'go build -o /app/server .')}`,
-      'ENV HOME=/tmp',
-      'USER nobody',
-      `CMD ${json(start ?? '/app/server')}`,
-      '',
-    ].join('\n');
-  }
-  throw new Error(`No template for ${runtime}.`);
+  const template = TEMPLATES[runtime];
+  if (!template) throw new Error(`No template for ${runtime}.`);
+  const build = buildCommand ? oneLine(buildCommand) : DEFAULTS[runtime].build;
+  const start = startCommand ? oneLine(startCommand) : DEFAULTS[runtime].start;
+  const slots = { BASE: BASES[runtime], RUN_BASE: BASES.debian, BUILD_WITH_ENV: JSON.stringify(WITH_BUILD_ENV + build), START: JSON.stringify(start) };
+  return template.split('\n').filter((l) => !l.startsWith('#')).join('\n').trimStart()
+    .replace(/\{\{([A-Z_]+)\}\}/g, (_, k) => {
+      if (slots[k] === undefined) throw new Error(`The ${runtime} template has an unknown slot ${k}.`);
+      return slots[k];
+    });
+}
+
+/** The build-time variables as the shell file the template sources: KEY='value', quotes escaped (spec 8.3 R5). */
+export function buildEnvFile(env = []) {
+  return env.map((e) => `${e.key}='${String(e.value).replaceAll("'", "'\\''")}'\n`).join('');
 }
 
 /** The `docker run` arguments for container.run / job.run (R6). Exported so tests can check every flag. */
@@ -70,6 +69,8 @@ export function runArgs(a, { envFile = null, detach = true } = {}) {
   const args = ['run', detach ? '-d' : '--rm', '--name', a.name];
   for (const [k, v] of Object.entries(a.labels)) args.push('--label', `${k}=${v}`);
   if (a.network) args.push('--network', a.network);
+  // The tenant's private names (spec 8.2 R5): Docker's DNS answers them only on this network.
+  if (a.network) for (const alias of a.aliases ?? []) args.push('--network-alias', alias);
   args.push(
     '--cpus', String(a.cpu),
     '--memory', `${a.memoryMb}m`, '--memory-swap', `${a.memoryMb}m`,
@@ -91,9 +92,9 @@ export function runArgs(a, { envFile = null, detach = true } = {}) {
  * @param {string[]} args
  * @param {{ cwd?: string, env?: object, input?: string, onLine?: (out: string, line: string) => void, keep?: boolean }} [o]
  */
-export function exec(cmd, args, { cwd, env, input, onLine, keep = true } = {}) {
+export function exec(cmd, args, { cwd, env, input, onLine, keep = true, signal } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { cwd, env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(cmd, args, { cwd, env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'], ...(signal ? { signal, killSignal: 'SIGTERM' } : {}) });
     const out = { stdout: '', stderr: '' };
     for (const name of ['stdout', 'stderr']) {
       createInterface({ input: child[name] }).on('line', (line) => {
@@ -139,8 +140,20 @@ const toBytes = (s) => {
 /**
  * @param {{ stateDir: string, docker?: string, git?: string }} o   stateDir holds env files while containers are created
  */
-export function createDocker({ stateDir, docker = 'docker', git = 'git' }) {
+export function createDocker({ stateDir, docker = 'docker', git = 'git', caddyAdmin = 'http://127.0.0.1:2019' }) {
   const envDir = path.join(stateDir, 'env');
+
+  /** Runs fn with a Docker config folder holding a registry login, deleted after (no credential stays on the server). */
+  async function withLogin(auth, fn) {
+    if (!auth) return fn([]);
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'noobly-registry-'));
+    try {
+      await must(docker, ['--config', dir, 'login', `--username=${auth.username}`, '--password-stdin', '--', auth.server], { input: auth.password });
+      return await fn(['--config', dir]);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  }
 
   async function inspect(name) {
     const r = await exec(docker, ['inspect', '--type', 'container', '--format', '{{json .}}', name]);
@@ -206,6 +219,12 @@ export function createDocker({ stateDir, docker = 'docker', git = 'git' }) {
 
         const args = ['build', '--progress=plain', '-t', a.tag];
         for (const [k, v] of Object.entries(a.labels)) args.push('--label', `${k}=${v}`);
+        // Build-time variables (spec 8.3 R5): a BuildKit secret the template sources for its build command, so they are
+        // in no layer and no image history. A repository's Dockerfile can mount it too (id build-env).
+        const envFile = path.join(work, 'build-env');
+        await fs.writeFile(envFile, buildEnvFile(a.buildEnv), { mode: 0o600 });
+        args.push('--secret', `id=build-env,src=${envFile}`);
+        if (a.buildEnv?.length) onLine(`With ${a.buildEnv.length} build-time variable${a.buildEnv.length === 1 ? '' : 's'}: ${a.buildEnv.map((e) => e.key).join(', ')}`);
         if (a.runtime === 'dockerfile') {
           onLine('Building from the repository\'s Dockerfile');
         } else {
@@ -214,13 +233,67 @@ export function createDocker({ stateDir, docker = 'docker', git = 'git' }) {
           args.push('-f', file);
           onLine(`Building with the ${a.runtime} template (${BASES[a.runtime]})`);
         }
-        const built = await exec(docker, [...args, '--', context], { onLine: (_, l) => onLine(l), keep: false, env: { DOCKER_BUILDKIT: '1' } });
+        // The time limit (spec 8.3 R2): the build is stopped when it runs over.
+        const limitS = a.timeoutS ?? 900;
+        let built;
+        try {
+          built = await exec(docker, [...args, '--', context], { onLine: (_, l) => onLine(l), keep: false, env: { DOCKER_BUILDKIT: '1' }, signal: AbortSignal.timeout(limitS * 1000) });
+        } catch (err) {
+          if (err.name === 'AbortError' || err.code === 'ABORT_ERR') throw new Error(`The build ran longer than its limit of ${Math.round(limitS / 60)} minutes and was stopped.`);
+          throw err;
+        }
         if (built.code !== 0) throw new Error('The image build failed; the lines above say why.');
         onLine(`Built ${a.tag}`);
         return { tag: a.tag, commit };
       } finally {
         await fs.rm(work, { recursive: true, force: true });
       }
+    },
+
+    /** Pushes a built image to the registry (spec 8.3 R3) with short-lived push credentials. Resolves { ref, digest }. */
+    async push(a, onLine) {
+      await must(docker, ['tag', a.tag, a.ref]);
+      try {
+        onLine(`Pushing to ${a.ref.split('/')[0]}`);
+        await withLogin(a.auth, (cfg) => must(docker, [...cfg, 'push', '--quiet', '--', a.ref]));
+        const digest = (await must(docker, ['image', 'inspect', '--format', '{{json .RepoDigests}}', a.ref])).stdout;
+        const found = (JSON.parse(digest.trim() || '[]') ?? []).find((d) => d.startsWith(`${a.ref.replace(/:[^:/]+$/, '')}@`));
+        onLine(`Pushed ${a.ref}`);
+        return { ref: a.ref, digest: found?.split('@')[1] ?? null };
+      } finally {
+        await exec(docker, ['image', 'rm', '--no-prune', '--', a.ref]);
+      }
+    },
+
+    /** Pulls an image (the registry's with read-only credentials, or a public one) and tags it as the controller's name for it. */
+    async pull(a, onLine) {
+      onLine(`Pulling ${a.ref}`);
+      await withLogin(a.auth, (cfg) => must(docker, [...cfg, 'pull', '--quiet', '--', a.ref]));
+      await must(docker, ['tag', a.ref, a.tag]);
+      const id = (await must(docker, ['image', 'inspect', '--format', '{{.Id}}', a.tag])).stdout.trim();
+      await exec(docker, ['image', 'rm', '--no-prune', '--', a.ref]);
+      return { tag: a.tag, id };
+    },
+
+    /** Spec 8.4: loads the rendered config into Caddy through its admin API (ingress VMs run Caddy with --resume). */
+    async ingressSync(a) {
+      const config = caddyConfig(a);
+      const res = await fetch(`${caddyAdmin}/load`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config), signal: AbortSignal.timeout(30_000) });
+      if (!res.ok) throw new Error(`Caddy refused the config: ${(await res.text()).slice(0, 300)}`);
+      return { sites: a.sites.length };
+    },
+
+    /** Spec 8.4 R7: per-host totals from Caddy's metrics. */
+    async ingressCounters() {
+      const res = await fetch(`${caddyAdmin}/metrics`, { signal: AbortSignal.timeout(10_000) });
+      if (!res.ok) throw new Error(`Caddy's metrics answered ${res.status}.`);
+      return parseMetrics(await res.text());
+    },
+
+    /** Removes one of this install's image tags (an old version, spec 8.3 R6). */
+    async removeImage(tag) {
+      const r = await exec(docker, ['image', 'rm', '--', tag]);
+      return { tag, removed: r.code === 0 };
     },
 
     async run(a) {
@@ -281,13 +354,22 @@ export function createDocker({ stateDir, docker = 'docker', git = 'git' }) {
       return last;
     },
 
+    /** A job (8.2 R6): runs to completion and is removed; its memory is sampled every 2 s for the peak. */
     async job(a, onLine) {
       const envFile = await writeEnv(a.name, a.env);
       const started = Date.now();
+      let peak = 0;
+      const sample = async () => {
+        const r = await exec(docker, ['stats', '--no-stream', '--format', '{{.MemUsage}}', '--', a.name]).catch(() => null);
+        if (r?.code === 0) peak = Math.max(peak, toMb(String(r.stdout).split('/')[0]));
+      };
+      const timer = setInterval(() => { sample(); }, 2000);
+      timer.unref?.();
       try {
         const r = await exec(docker, runArgs(a, { envFile, detach: false }), { onLine, keep: false });
-        return { exitCode: r.code, durationMs: Date.now() - started };
+        return { exitCode: r.code, durationMs: Date.now() - started, peakMemoryMb: Math.round(peak) || null };
       } finally {
+        clearInterval(timer);
         if (envFile) await fs.rm(envFile, { force: true });
       }
     },
@@ -311,6 +393,21 @@ export function createDocker({ stateDir, docker = 'docker', git = 'git' }) {
         ended = true;
         child.kill();
       };
+    },
+
+    /** Every container of these labels: its state, exit code and how many times Docker restarted it (8.2 R7). */
+    async states(labels) {
+      const names = (await this.list(labels)).map((c) => c.name);
+      if (!names.length) return [];
+      const r = await exec(docker, ['inspect', '--type', 'container', '--format', '{{json .}}', '--', ...names]);
+      return String(r.stdout).split('\n').filter(Boolean).map((l) => {
+        try {
+          const c = JSON.parse(l);
+          return { name: c.Name.replace(/^\//, ''), state: c.State?.Status ?? 'unknown', exitCode: c.State?.ExitCode ?? null, restarts: c.RestartCount ?? 0 };
+        } catch {
+          return null;
+        }
+      }).filter(Boolean);
     },
 
     async stats(labels) {
