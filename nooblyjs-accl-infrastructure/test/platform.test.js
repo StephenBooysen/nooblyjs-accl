@@ -391,7 +391,7 @@ test('8.1.6 operators read every tenant over /api/v1/platform; anyone else is re
     assert.equal((await t.get('/infrastructure/api/v1/platform')).status, 401);
 
     const list = await t.get('/infrastructure/api/v1/platform/tenants/exclusivity-life/workloads?kind=worker', { as: 'stevie' });
-    assert.deepEqual(list.json.workloads.map((w) => w.name), ['agents', 'orders']);
+    assert.deepEqual(list.json.workloads.map((w) => w.name), ['agents']);
     const one = await t.get('/infrastructure/api/v1/platform/tenants/exclusivity-life/workloads/api', { as: 'stevie' });
     assert.equal(one.json.current.commit, 'a1f3c9e');
     const deploys = await t.get('/infrastructure/api/v1/platform/tenants/exclusivity-life/workloads/agents/deploys?limit=1', { as: 'stevie' });
@@ -415,7 +415,7 @@ test('8.1.7 the seed tenant exclusivity-life runs NooblyJS Cloud\'s services, an
     const list = await p.workloads.list('exclusivity-life');
     assert.deepEqual(list.map((w) => [w.name, w.kind, w.status]), [
       ['agents', 'worker', 'live'], ['api', 'service', 'live'], ['etl', 'job', 'live'],
-      ['orders', 'worker', 'deploying'], ['records', 'private', 'live'], ['storefront', 'static', 'live'],
+      ['orders', 'job', 'deploying'], ['records', 'private', 'live'], ['storefront', 'static', 'live'],
     ]);
     const api = list.find((w) => w.name === 'api');
     assert.deepEqual([api.instances, api.plan, api.domains], [2, { cpu: 1, memoryMb: 2048 }, ['api-exclusivity.nooblyjs.app']]);

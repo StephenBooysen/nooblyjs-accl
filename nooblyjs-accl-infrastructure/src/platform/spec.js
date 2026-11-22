@@ -13,12 +13,14 @@ const HOSTNAME = /^(?=.{1,253}$)([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?\.)+[a-z]{2,6
 const LINKS = ['database', 'keyvalue', 'bucket'];
 
 /** What update() may change; name, kind, region and account are fixed once a workload exists. */
-export const CHANGEABLE = ['source', 'build', 'run', 'plan', 'instances', 'healthCheck', 'domains', 'autoDeploy', 'schedule', 'sleep'];
+export const CHANGEABLE = ['source', 'build', 'run', 'plan', 'instances', 'healthCheck', 'domains', 'autoDeploy', 'schedule', 'concurrency', 'sleep'];
 /** Changes that need a new build and rollout; plan and instances need only a rolling restart (scale). */
 export const REDEPLOY = ['source', 'build', 'run'];
 export const RESCALE = ['plan', 'instances'];
 
-export const LIMITS = { instances: 20, cpu: 16, memoryMb: 65536, env: 200, domains: 20 };
+export const LIMITS = { instances: 20, cpu: 16, memoryMb: 65536, env: 200, domains: 20, concurrency: 20 };
+/** A key for a variable of the workload or of one run (runJob's env). */
+export const isEnvKey = (k) => typeof k === 'string' && ENV_KEY.test(k);
 /** A public Git repository's https:// URL: a host and a path, no credentials, query or fragment. */
 export function isPublicGitUrl(v) {
   // URL() resolves '..' and percent-escapes away, so look at the text as written first.
@@ -177,13 +179,17 @@ export function checkSpec(input, { regions }) {
   // A job's schedule is kept by the launcher (spec 8.1, R3); it is stored so the Platform screen can show it.
   const schedule = input.schedule ?? null;
   if (schedule !== null && (kind !== 'job' || !text(schedule, 100))) bad('schedule', kind === 'job' ? 'Up to 100 characters.' : 'Only a job has a schedule.');
+  // How many of a job's runs may go at once (8.2 R6): 1 for a schedule's job; more for a launcher's task queue.
+  const concurrency = input.concurrency ?? (kind === 'job' ? 1 : null);
+  if (kind !== 'job' && concurrency !== null) bad('concurrency', 'Only a job has runs.');
+  else if (kind === 'job' && (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > LIMITS.concurrency)) bad('concurrency', `From 1 to ${LIMITS.concurrency} runs at once.`);
 
   if (Object.keys(fields).length) {
     throw unprocessable(`Check ${Object.keys(fields).join(', ')}.`, { fields });
   }
   return {
     name: input.name, kind, region, account, source, build, run, plan: { cpu: plan.cpu, memoryMb: plan.memoryMb }, instances,
-    healthCheck, domains: [...domains], autoDeploy, sleep, ...(kind === 'job' ? { schedule } : {}),
+    healthCheck, domains: [...domains], autoDeploy, sleep, ...(kind === 'job' ? { schedule, concurrency } : {}),
   };
 }
 

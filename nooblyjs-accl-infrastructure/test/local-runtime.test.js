@@ -85,7 +85,11 @@ test('local site: enrolment, the region list, a deploy with build log, limits, P
     const events = [];
     app.eventEmitter.on('infrastructure.workload.log', (e) => events.push(e));
     docker.emit(running[0].name, 'GET / 200 3ms');
-    assert.ok(await until(async () => (await platform.logs.tail(TENANT, 'hello')).lines.some((l) => l.line === 'GET / 200 3ms')));
+    // Both instances' start-up lines too, so none arrives after the cursor below is taken.
+    assert.ok(await until(async () => {
+      const got = (await platform.logs.tail(TENANT, 'hello')).lines;
+      return got.some((l) => l.line === 'GET / 200 3ms') && running.every((c) => got.some((l) => l.instance === c.name && l.line === 'Listening on port 10400'));
+    }));
     const tail = await platform.logs.tail(TENANT, 'hello');
     assert.ok(tail.lines.some((l) => l.line === 'Listening on port 10400'), 'the start-up line too');
     assert.deepEqual((await platform.logs.tail(TENANT, 'hello', { after: tail.cursor })).lines, []);
