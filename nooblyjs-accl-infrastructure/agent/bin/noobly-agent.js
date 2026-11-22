@@ -22,6 +22,8 @@ const { positionals, values } = parseArgs({
     'token-file': { type: 'string' },
     'state-dir': { type: 'string', default: process.env.NOOBLY_AGENT_STATE ?? '/var/lib/noobly-agent' },
     dev: { type: 'boolean', default: false },
+    // A database server this agent may relay tenant containers to (spec 8.6 R2): host:port, repeatable.
+    'relay-target': { type: 'string', multiple: true, default: [] },
   },
 });
 const [command = 'run'] = positionals;
@@ -63,7 +65,8 @@ if (!(state.server && state.credential) && !token) {
   process.exit(2);
 }
 
-const docker = createDocker({ stateDir });
+const docker = createDocker({ stateDir, relayTargets: values['relay-target'], log });
+await docker.relays.restore();
 const agent = connectForever({
   controller,
   dev: values.dev,

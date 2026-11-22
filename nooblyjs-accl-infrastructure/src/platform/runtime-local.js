@@ -25,6 +25,11 @@ import { CloudError } from '../providers/errors.js';
 import { hasLabels } from '../providers/contract.js';
 import { HOST_PORTS, MAX_EXPORT_BYTES } from '../../agent/protocol.js';
 import { place as placeInstances } from './placement.js';
+import { internalHost } from './names.js';
+
+/** Key Value stores on a local site (spec 8.7, local: decision of 2026-11-22): this image, pulled from Docker Hub. */
+export const STORE_IMAGE = 'valkey/valkey:8.1-alpine';
+export const STORE_PORT = 6379;
 
 const FILE = ['local', 'instances.yaml'];
 const IMAGES = ['local', 'images.yaml'];
@@ -60,7 +65,7 @@ export function cloneUrl(repo) {
  * @param {() => number} o.now
  * @param {{ warn: Function, info: Function }} o.log
  */
-export function createLocalRuntime({ store, servers, hub, resolveSecrets = async () => ({}), onLog = () => {}, onInstances = () => {}, onMetrics = () => {}, onEndpoints = () => {}, onCrash = () => {}, drainMs = 2000, poolDrainMs = 30_000, statsEveryS = 10, now, log }) {
+export function createLocalRuntime({ store, servers, hub, resolveSecrets = async () => ({}), resolveLinks = async () => ({}), onLog = () => {}, onInstances = () => {}, onMetrics = () => {}, onEndpoints = () => {}, onCrash = () => {}, drainMs = 2000, poolDrainMs = 30_000, statsEveryS = 10, now, log }) {
   const iso = () => new Date(now()).toISOString();
   /** Site ids this runtime answers for (kept in step with servers.sites()). */
   const siteIds = new Set();
@@ -311,11 +316,19 @@ export function createLocalRuntime({ store, servers, hub, resolveSecrets = async
     return env.map((e) => ({ key: e.key, value: e.secretRef ? values[e.secretRef] ?? '' : String(e.value) }));
   }
 
-  async function envFor(tenantId, run) {
+  /**
+   * A container's variables: values, opened secrets and linked resources (spec 8.6 R5: a database's connection string
+   * through the relay on the tenant's network on `server`, which resolveLinks asks for with `relay(args)`).
+   */
+  async function envFor(tenantId, run, { site, server, network } = {}) {
     const env = run?.env ?? [];
     const refs = env.filter((e) => e.secretRef).map((e) => e.secretRef);
     const values = refs.length ? await resolveSecrets(tenantId, refs) : {};
-    const out = env.map((e) => ({ key: e.key, value: e.secretRef ? values[e.secretRef] ?? '' : String(e.value ?? '') }));
+    const links = env.filter((e) => e.link);
+    const linked = links.length
+      ? await resolveLinks(tenantId, links, { region: site?.id, relay: (args) => send(server.id, 'relay.ensure', { network, ...args }) })
+      : {};
+    const out = env.map((e) => ({ key: e.key, value: e.link ? linked[e.key] ?? '' : e.secretRef ? values[e.secretRef] ?? '' : String(e.value ?? '') }));
     // PORT is the platform's, as on Render: the app listens where it is told.
     if (run?.port && !out.some((e) => e.key === 'PORT')) out.push({ key: 'PORT', value: String(run.port) });
     return out;
@@ -330,7 +343,7 @@ export function createLocalRuntime({ store, servers, hub, resolveSecrets = async
     const name = `noobly-${tenantHash(labels).slice(0, 8)}-${labels['noobly-workload']}-${rand(6)}`.slice(0, 108);
     const instLabels = { ...agentLabels(labels), 'noobly-instance': name.slice(-6) };
     const bind = bindOf(site, server);
-    const env = await envFor(tenantId, run);
+    const env = await envFor(tenantId, run, { site, server, network });
     let hostPort = null;
     // A port something else on the server holds (not one of ours) is skipped: try the next one, a few times.
     for (let attempt = 0; ; attempt += 1) {
@@ -356,7 +369,7 @@ export function createLocalRuntime({ store, servers, hub, resolveSecrets = async
   }
 
   /** What an instance record keeps of the run spec to start it again elsewhere: secret refs, never values. */
-  const runOf = (run) => (run ? { ...(run.port ? { port: run.port } : {}), env: (run.env ?? []).map((e) => (e.secretRef ? { key: e.key, secretRef: e.secretRef } : { key: e.key, value: String(e.value ?? '') })) } : null);
+  const runOf = (run) => (run ? { ...(run.port ? { port: run.port } : {}), env: (run.env ?? []).map((e) => (e.link ? { key: e.key, link: e.link } : e.secretRef ? { key: e.key, secretRef: e.secretRef } : { key: e.key, value: String(e.value ?? '') })) } : null);
 
   /**
    * Makes sure `server` has `image`: pulled from the registry with read-only credentials (spec 8.3 R3), pulled from
@@ -557,9 +570,13 @@ export function createLocalRuntime({ store, servers, hub, resolveSecrets = async
   const num = (v, max = 1e15) => (Number.isFinite(Number(v)) ? Math.min(Math.max(0, Number(v)), max) : 0);
 
   /** One stats frame from a server: a sample per known instance (8.5 R1), with the plan's limits alongside. */
+  const storeStats = new Map(); // container → { memoryMb, at }
   async function onStats(serverId, frame) {
     const samples = Array.isArray(frame.samples) ? frame.samples.slice(0, 500) : [];
-    const byName = new Map((await read()).instances.filter((i) => i.server === serverId).map((i) => [i.name, i]));
+    const st = await read();
+    const byName = new Map(st.instances.filter((i) => i.server === serverId).map((i) => [i.name, i]));
+    const stores = new Set((st.stores ?? []).filter((s) => s.server === serverId).map((s) => s.container));
+    for (const raw of samples) if (stores.has(raw?.name)) storeStats.set(raw.name, { memoryMb: num(raw.memoryMb, 1 << 22), at: typeof frame.at === 'string' ? frame.at : iso() });
     const total = { at: frame.at, cpu: 0, memoryMb: 0, rxBytes: 0, txBytes: 0, instances: 0 };
     for (const raw of samples) {
       const inst = byName.get(String(raw?.name ?? ''));
@@ -694,6 +711,78 @@ export function createLocalRuntime({ store, servers, hub, resolveSecrets = async
     setGrow: (fn) => { grow = fn; },
     setBuilders: (b) => { builders = b; },
     setIngress: (i) => { ingress = i; },
+    /**
+     * Tells the relays on a tenant's networks which databases they reach (spec 8.6 R2): every online server that has
+     * one of the tenant's instances or networks gets the list; an empty list closes the relay.
+     */
+    async refreshRelays(tenantId, { target, databases }) {
+      const network = `noobly-t-${short(tenantId)}`;
+      const ids = new Set((await read()).instances.filter((i) => i.labels?.['noobly-tenant'] === tenantId).map((i) => i.server));
+      for (const id of ids) {
+        if (!hub.isOnline(id)) continue;
+        const r = databases.length
+          ? hub.command(id, 'relay.ensure', { network, target, databases })
+          : hub.command(id, 'relay.remove', { network });
+        await r.catch((err) => log.warn(`relay on ${id} for ${tenantId}: ${err.message}`));
+      }
+    },
+
+    /**
+     * Key Value stores (spec 8.7, local): one Valkey container on the tenant's network, answering on a private name only
+     * that network resolves, with a password, a memory limit and an eviction policy, and no persistence. Docker
+     * restarts it if it stops; its keys do not survive that (they live in memory).
+     */
+    stores: {
+      /** Starts (or starts again) a store. → { server, container, host, port } */
+      async run({ tenantId, name, labels, region, memoryMb, eviction, connections = 100, password, log: log_ = async () => {} }) {
+        const site = await siteOf(region);
+        const plan = { cpu: 0.25, memoryMb: memoryMb + 64 };
+        const existing = ((await read()).stores ?? []).find((s) => s.tenantId === tenantId && s.name === name);
+        const [server] = existing && hub.isOnline(existing.server) ? [{ id: existing.server, hostname: existing.server }] : await choose({ site, plan, count: 1, labels, log: log_ });
+        const tag = `noobly/${short(STORE_IMAGE)}/valkey:${short(STORE_IMAGE, 12)}`;
+        await log_(`Pulling ${STORE_IMAGE} on ${server.hostname ?? server.id}`);
+        await streamed(server.id, 'image.pull', { ref: STORE_IMAGE, tag }, log_, { timeoutMs: 15 * 60_000 });
+        const network = `noobly-t-${tenantHash(labels)}`;
+        await send(server.id, 'network.ensure', { name: network, labels: { ...agentLabels(labels), 'noobly-workload': 'network' } });
+        const container = `noobly-${tenantHash(labels).slice(0, 8)}-kv-${name}`.slice(0, 108);
+        if (existing) await hub.command(existing.server, 'container.remove', { name: existing.container }).catch(() => {});
+        await hub.command(server.id, 'container.remove', { name: container }).catch(() => {});
+        const host = internalHost(tenantId, `${name}-kv`);
+        // The password goes in through the environment into a file on the container's /tmp, never its command line.
+        const command = ['/bin/sh', '-c', `printf 'requirepass %s\\n' "$KV_PASSWORD" > /tmp/valkey.conf && unset KV_PASSWORD && exec valkey-server /tmp/valkey.conf --port ${STORE_PORT} --maxmemory ${memoryMb}mb --maxmemory-policy ${eviction} --maxclients ${Number(connections)} --save '' --appendonly no --protected-mode no`];
+        await send(server.id, 'container.run', {
+          name: container, image: tag, labels: { ...agentLabels(labels), 'noobly-instance': 'kv' }, network, aliases: [host],
+          cpu: plan.cpu, memoryMb: plan.memoryMb, env: [{ key: 'KV_PASSWORD', value: password }], command,
+        });
+        await change((st) => {
+          st.stores = (st.stores ?? []).filter((s) => !(s.tenantId === tenantId && s.name === name));
+          st.stores.push({ tenantId, name, server: server.id, container, host, region, memoryMb, startedAt: iso() });
+        });
+        await log_(`Started ${container} on ${server.hostname ?? server.id}: ${host}:${STORE_PORT} on the tenant's network only`);
+        return { server: server.id, container, host, port: STORE_PORT };
+      },
+      async remove({ tenantId, name }) {
+        const s = ((await read()).stores ?? []).find((x) => x.tenantId === tenantId && x.name === name);
+        if (!s) return { removed: false };
+        if (hub.isOnline(s.server)) await send(s.server, 'container.remove', { name: s.container });
+        await change((st) => { st.stores = (st.stores ?? []).filter((x) => !(x.tenantId === tenantId && x.name === name)); });
+        storeStats.delete(s.container);
+        return { removed: true };
+      },
+      /** → { running, memoryMb (used, from Docker), at } */
+      async status({ tenantId, name }) {
+        const s = ((await read()).stores ?? []).find((x) => x.tenantId === tenantId && x.name === name);
+        if (!s) return null;
+        let running = null;
+        if (hub.isOnline(s.server)) {
+          const list = await hub.command(s.server, 'container.list', { labels: { 'noobly-install': hub.session(s.server)?.install ?? '' } }).catch(() => null);
+          running = list ? (list.containers ?? []).some((c) => c.name === s.container && c.state === 'running') : null;
+        }
+        const st = storeStats.get(s.container);
+        return { running, server: s.server, memoryMb: st?.memoryMb ?? null, at: st?.at ?? null };
+      },
+    },
+
     /** Waits for background work (ingress syncs, image clean-up) to finish. */
     settle: async () => { while (pending.size) await Promise.allSettled([...pending]); },
     /** The retention job (spec 8.3 R6): registry images beyond each workload's last five, except those still recorded. */
@@ -769,7 +858,8 @@ export function createLocalRuntime({ store, servers, hub, resolveSecrets = async
       for (const inst of now_) await follow(inst, inst.logAt ?? null);
       // Leftovers: ours by label, not in the records for this server (job containers remove themselves).
       if (present) {
-        const mine = new Set((await read()).instances.filter((i) => i.server === serverId).map((i) => i.name));
+        const st = await read();
+        const mine = new Set([...st.instances.filter((i) => i.server === serverId).map((i) => i.name), ...(st.stores ?? []).filter((s) => s.server === serverId).map((s) => s.container)]);
         for (const c of present) {
           if (mine.has(c.name) || /-run-[0-9a-f]{6}$/.test(c.name)) continue;
           await hub.command(serverId, 'container.remove', { name: c.name })
@@ -1034,11 +1124,14 @@ export function createLocalRuntime({ store, servers, hub, resolveSecrets = async
       });
       try {
         await ensureImage(server, image, log_);
+        // On the tenant's network, as its instances are: its private services and linked databases answer there.
+        const network = `noobly-t-${tenantHash(labels)}`;
+        await send(server.id, 'network.ensure', { name: network, labels: { ...agentLabels(labels), 'noobly-workload': 'network' } });
         // The run's own variables (a task's name and input) come after the workload's and win.
         const own = new Set(runEnv.map((e) => e.key));
-        const env = [...(await envFor(labels['noobly-tenant'], runSpec)).filter((e) => !own.has(e.key)), ...runEnv];
+        const env = [...(await envFor(labels['noobly-tenant'], runSpec, { site, server, network })).filter((e) => !own.has(e.key)), ...runEnv];
         const r = await send(server.id, 'job.run', {
-          name, image, labels: agentLabels(labels), cpu: plan.cpu, memoryMb: plan.memoryMb, stream,
+          name, image, labels: agentLabels(labels), network, cpu: plan.cpu, memoryMb: plan.memoryMb, stream,
           env, ...(command ? { command: ['/bin/sh', '-c', command] } : {}),
         }, { timeoutMs: 24 * 3_600_000 });
         await chain;

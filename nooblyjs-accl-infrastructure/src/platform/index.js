@@ -14,11 +14,13 @@ import { createPlatformRepos } from './repos.js';
 import { createMockRuntime } from './runtime-mock.js';
 import { createLocalRuntime } from './runtime-local.js';
 import { createSites, KEEP as SITE_KEEP } from './sites.js';
+import { createDatabases, DATABASE_OPERATIONS } from './databases.js';
+import { createKeyValue, KEYVALUE_OPERATIONS } from './keyvalue.js';
 import { checkSpec, specOf, same, isEnvKey, CHANGEABLE, REDEPLOY, RESCALE } from './spec.js';
 import { isTenantId, isWorkloadName, KINDS, STATUSES, HTTP_KINDS, internalHost } from './names.js';
 import { CloudError } from '../providers/errors.js';
 
-export const OPERATION_TYPES = ['workload.create', 'workload.deploy', 'workload.scale', 'workload.restart', 'workload.suspend', 'workload.resume', 'workload.sleep', 'workload.wake', 'workload.delete', 'workload.job.run', 'site.create', 'site.deploy'];
+export const OPERATION_TYPES = ['workload.create', 'workload.deploy', 'workload.scale', 'workload.restart', 'workload.suspend', 'workload.resume', 'workload.sleep', 'workload.wake', 'workload.delete', 'workload.job.run', 'site.create', 'site.deploy', ...DATABASE_OPERATIONS, ...KEYVALUE_OPERATIONS];
 export const TRIGGERS = ['push', 'manual', 'config'];
 /** What may start a job's run: a person, the launcher's schedule, or the launcher's API (a task queue, 8.2 R6). */
 export const RUN_TRIGGERS = ['manual', 'schedule', 'api'];
@@ -57,7 +59,7 @@ function tenantOf(tenantId) {
  * @param {(tenantId: string, refs: string[]) => Promise<Record<string, string>>} [o.resolveSecrets]   the launcher opens secretRefs
  * @param {(type: string, payload: object) => void} [o.emitRaw]   the launcher's EventEmitter, for runtime log lines (not Activity)
  */
-export function createPlatform({ store, host, operations, config, catalog, log, now, mockStepMs = 1200, workloadsPerTenant = 100, local = null, resolveSecrets, emitRaw = () => {} }) {
+export function createPlatform({ store, host, operations, config, catalog, log, now, mockStepMs = 1200, workloadsPerTenant = 100, local = null, resolveSecrets, emitRaw = () => {}, secrets = null, databaseCheckMs = 60_000 }) {
   const repos = createPlatformRepos(store, { log });
   const mockRuntime = createMockRuntime({ store, stepMs: mockStepMs, now });
   // Static sites (spec 8.8): their files and how they are served, for local sites and the mock cloud.
@@ -131,13 +133,60 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
   function onCrash(tenantId, workload, c) {
     emit('infrastructure.instance.crashed', { tenantId, workload, ...c }).catch((err) => log.warn(`crash event: ${err.message}`));
   }
+  // Databases (spec 8.6): set below; links resolve through them when a container starts.
+  let databases = null;
+  let keyvalue = null;
+  const relayTarget = local?.postgres ? `${local.postgres.server.host}:${local.postgres.server.port}` : null;
+  /** A container's linked variables: each database's connection string through the relay on its network (8.6 R5). */
+  async function resolveLinks(tenantId, links, { region, relay }) {
+    const out = {};
+    let through = null;
+    for (const e of links) {
+      if (e.link.keyvalue) {
+        out[e.key] = await keyvalue.linkValue(tenantId, e.link.keyvalue, { region });
+        continue;
+      }
+      if (!e.link.database) continue;
+      if (!relayTarget) throw new CloudError('invalid', 'This site has no Postgres server for a linked database: an operator sets local.postgres.url.');
+      through ??= await relay({ target: relayTarget, databases: await databases.allowList(tenantId) });
+      out[e.key] = await databases.linkValue(tenantId, e.link.database, { region, relay: through });
+    }
+    return out;
+  }
   const localRuntime = local ? createLocalRuntime({
-    store, servers: local.servers, hub: local.hub, resolveSecrets, onLog, onInstances, onMetrics, onCrash, now, log,
+    store, servers: local.servers, hub: local.hub, resolveSecrets, resolveLinks, onLog, onInstances, onMetrics, onCrash, now, log,
     // Raw, not Activity: a launcher's proxy re-reads workloads.endpoints() when it hears this.
     onEndpoints: (tenantId, workload) => raw('infrastructure.workload.endpoints', { tenantId, workload }),
     statsEveryS: local.statsEveryS ?? 10, drainMs: local.drainMs ?? 2000, poolDrainMs: local.poolDrainMs ?? local.drainMs ?? 30_000,
   }) : null;
   const pick = (a) => (localRuntime?.handles(a?.region) ? localRuntime : mockRuntime);
+  databases = secrets ? createDatabases({
+    store, host, operations, secrets, local: local?.postgres ?? null, now, log, checkMs: databaseCheckMs,
+    isLocal: (region) => Boolean(localRuntime?.handles(region)),
+    isRegion: (region) => regions.has(region) || Boolean(localRuntime?.handles(region)),
+    refreshRelays: async (tenantId) => {
+      if (localRuntime && relayTarget) await localRuntime.refreshRelays(tenantId, { target: relayTarget, databases: await databases.allowList(tenantId) });
+    },
+    emitRaw,
+  }) : null;
+  keyvalue = secrets ? createKeyValue({
+    store, host, operations, secrets, runtime: localRuntime?.stores ?? null, now, emitRaw,
+    isLocal: (region) => Boolean(localRuntime?.handles(region)),
+    isRegion: (region) => regions.has(region) || Boolean(localRuntime?.handles(region)),
+    labelsFor: (tenantId, name) => labelsFor(tenantId, name),
+  }) : null;
+  /** A workload's linked databases and Key Value stores are its tenant's, in its region (spec 8.6 R2, 8.7 R2). */
+  async function checkLinks(tenantId, spec) {
+    const fields = {};
+    for (const [i, e] of (spec.run?.env ?? []).entries()) {
+      const [what, name, api] = e.link?.database ? ['database', e.link.database, databases] : e.link?.keyvalue ? ['Key Value store', e.link.keyvalue, keyvalue] : [];
+      if (!what) continue;
+      const r = api ? await api.get(tenantId, name).catch(() => null) : null;
+      if (!r) fields[`run.env.${i}`] = `There is no ${what} ${name}.`;
+      else if (r.region !== spec.region) fields[`run.env.${i}`] = `${name} is in ${r.region}, not ${spec.region}.`;
+    }
+    if (Object.keys(fields).length) throw unprocessable('Check the linked databases.', { fields });
+  }
   const runtime = {
     name: 'routed',
     build: (a) => pick(a).build(a),
@@ -622,6 +671,7 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
       const by = actorOf(actor);
       checkCommit(commit, message);
       const checked = checkSpec(spec, { regions });
+      await checkLinks(tenantId, checked);
       if (await repos.workloads.get(tenantId, checked.name)) throw conflict(`There is already a workload called ${checked.name}.`, { fields: { name: 'Taken in this workspace.' } });
       if ((await repos.workloads.list(tenantId)).length >= workloadsPerTenant) throw quota(`A tenant may have up to ${workloadsPerTenant} workloads.`);
       await checkDomains(tenantId, checked.name, checked.domains);
@@ -671,6 +721,7 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
       if (changes.source?.image !== undefined) merged.source = { image: changes.source.image };
       else if (changes.source?.repo !== undefined && w.source?.image) merged.source = { ...changes.source };
       const checked = checkSpec(merged, { regions });
+      if (changes.run) await checkLinks(tenantId, checked);
       const changed = CHANGEABLE.filter((k) => !same(checked[k], w[k]));
       if (!changed.length) return { workload: view(w), operation: null };
       if (changed.includes('domains')) await checkDomains(tenantId, name, checked.domains);
@@ -1029,6 +1080,36 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
       deploys,
       staticSites: siteApi,
       /**
+       * Postgres databases (spec 8.6): create, list, get, connection (the launcher audits who sees it), stats, update,
+       * remove, backups, backup, restore. A workload links one with { key, link: { database: name } } in run.env.
+       */
+      databases: databases ? {
+        create: (...a) => databases.create(...a),
+        list: (...a) => databases.list(...a),
+        get: (...a) => databases.get(...a),
+        connection: (t, n) => databases.connection(t, n),
+        stats: (...a) => databases.stats(...a),
+        update: (...a) => databases.update(...a),
+        remove: (...a) => databases.remove(...a),
+        backups: (...a) => databases.backups(...a),
+        backup: (...a) => databases.backup(...a),
+        restore: (...a) => databases.restore(...a),
+      } : null,
+      /**
+       * Key Value stores (spec 8.7): create, list, get, connection (the launcher audits who sees it), stats, update,
+       * remove. A workload links one with { key, link: { keyvalue: name } } in run.env.
+       */
+      keyvalue: keyvalue ? {
+        create: (...a) => keyvalue.create(...a),
+        list: (...a) => keyvalue.list(...a),
+        get: (...a) => keyvalue.get(...a),
+        connection: (t, n) => keyvalue.connection(t, n),
+        stats: (...a) => keyvalue.stats(...a),
+        update: (...a) => keyvalue.update(...a),
+        remove: (...a) => keyvalue.remove(...a),
+        hostOf: (t, n) => keyvalue.hostOf(t, n),
+      } : null,
+      /**
        * A job's runs (spec 8.2 R6), newest first: runs(tenantId, name, { limit }) → { runs }; get(tenantId, name, runId)
        * → the run with its log. A run: { id, status (queued, running, succeeded, failed, cancelled), trigger, command,
        * requestedBy, createdAt, startedAt, finishedAt, exitCode, durationMs, peakMemoryMb, reason }.
@@ -1084,6 +1165,7 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
       sites: async () => (local ? (await local.servers.sites()).filter((s) => s.mode !== 'pool').map((s) => ({ id: s.id, name: s.name, mode: s.mode })) : []),
     },
     overview,
+    databases,
     /** Called with (tenantId, name) after a workload's status changes or a change lands (ingress, spec 8.4). */
     setOnChanged: (fn) => { onChanged = fn; },
     /** The ingress's traffic and host names, for services.workloads.traffic() and hosts(). */

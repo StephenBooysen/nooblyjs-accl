@@ -154,6 +154,24 @@ const WORDS = {
     text: (p) => `deploy of ${p.workload}${p.commit ? ` ${p.commit}` : ''} for ${p.tenantId}`,
     summary: (p) => `could not deploy ${p.workload}${p.commit ? ` ${p.commit}` : ''} for ${p.tenantId}: ${p.reason}`,
   },
+  'infrastructure.database.status': {
+    verb: 'Status', tone: 'neutral',
+    text: (p) => `database ${p.database} for ${p.tenantId} is ${p.status}`,
+    summary: (p) => `saw database ${p.database} for ${p.tenantId} become ${p.status}${p.reason ? `: ${p.reason}` : ''}`,
+  },
+  'infrastructure.database.deleted': { verb: 'Deleted', tone: 'neutral', text: (p) => `database ${p.database} for ${p.tenantId}` },
+  'infrastructure.database.backed_up': { verb: 'Backed up', tone: 'success', text: (p) => `database ${p.database} for ${p.tenantId}` },
+  'infrastructure.database.backup_failed': {
+    verb: 'Failed', tone: 'danger',
+    text: (p) => `backup of database ${p.database} for ${p.tenantId}`,
+    summary: (p) => `could not back up database ${p.database} for ${p.tenantId}: ${p.reason}`,
+  },
+  'infrastructure.keyvalue.status': {
+    verb: 'Status', tone: 'neutral',
+    text: (p) => `Key Value ${p.keyvalue} for ${p.tenantId} is ${p.status}`,
+    summary: (p) => `saw Key Value ${p.keyvalue} for ${p.tenantId} become ${p.status}${p.reason ? `: ${p.reason}` : ''}`,
+  },
+  'infrastructure.keyvalue.deleted': { verb: 'Deleted', tone: 'neutral', text: (p) => `Key Value ${p.keyvalue} for ${p.tenantId}` },
   'infrastructure.bucket.created': { verb: 'Created', tone: 'info', text: (p) => `bucket ${p.name} · ${cloudOf(p)} ${p.region}` },
 };
 

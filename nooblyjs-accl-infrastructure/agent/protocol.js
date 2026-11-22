@@ -258,6 +258,9 @@ export const COMMANDS = {
   },
   /** Spec 8.4 R7: per-host request and byte totals since Caddy started. */
   'ingress.counters': {},
+  /** A relay on a tenant network's gateway to a database server the agent was told it may reach (spec 8.6 R2). */
+  'relay.ensure': { network: S.str(RULES.network), target: S.str(/^[A-Za-z0-9][A-Za-z0-9.-]{0,252}:\d{1,5}$/, { max: 260 }), port: S.int(1024, 65535, { optional: true }), databases: S.strings(500, 63) },
+  'relay.remove': { network: S.str(RULES.network) },
   'container.run': runShape,
   'container.stop': { name: container, timeoutS: S.int(0, 120, { optional: true }) },
   'container.remove': { name: container },
