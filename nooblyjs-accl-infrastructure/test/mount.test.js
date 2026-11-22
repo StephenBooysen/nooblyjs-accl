@@ -199,3 +199,26 @@ test('seeding is idempotent, and a reset empties the folder and writes the story
     await t.close();
   }
 });
+
+test('every seeded install has its own install id, kept by a reset (two installs on one Docker never share a label)', async () => {
+  const [a, b] = [await startApp({ seed: true }), await startApp({ seed: true })];
+  try {
+    const idOf = async (t) => /installId: (\S+)/.exec(await fs.readFile(path.join(t.dataDir, 'config.yaml'), 'utf8'))?.[1];
+    const [ida, idb] = [await idOf(a), await idOf(b)];
+    assert.match(ida, /^nc-[0-9a-f]{8}$/);
+    assert.notEqual(ida, idb, 'two folders, two ids');
+    // The story's labels carry the install's own id, not a fixed one.
+    const cloud = await fs.readFile(path.join(a.dataDir, 'mock-cloud', 'stevie-prod.yaml'), 'utf8');
+    assert.ok(cloud.includes(`noobly-install: ${ida}`));
+    assert.ok(!/\{\{install\}\}|nc-seed01/.test(cloud));
+    await a.hosted.seed({ reset: true });
+    assert.equal(await idOf(a), ida, 'a reset keeps the id');
+    // A folder seeded before ids were per install still says nc-seed01: a reset gives it its own.
+    await fs.writeFile(path.join(b.dataDir, 'config.yaml'), 'installId: nc-seed01\n');
+    await b.hosted.seed({ reset: true });
+    assert.match(await idOf(b), /^nc-[0-9a-f]{8}$/);
+  } finally {
+    await a.close();
+    await b.close();
+  }
+});

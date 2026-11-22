@@ -66,6 +66,8 @@ export function createLocalRuntime({ store, servers, hub, resolveSecrets = async
   const siteIds = new Set();
   /** stream id → handler(frame) */
   const streams = new Map();
+  /** instance name → its open log stream: a container Docker restarted is followed again (its follow ended). */
+  const following = new Map();
 
   const read = async () => (await store.readYaml(FILE)) ?? { instances: [] };
   const change = (fn) => store.withLock(FILE, async () => {
@@ -236,6 +238,8 @@ export function createLocalRuntime({ store, servers, hub, resolveSecrets = async
     const tenantId = inst.labels['noobly-tenant'];
     const workload = inst.labels['noobly-workload'];
     const seen = since ? new Set(inst.logTail ?? []) : null;
+    const restartsAtStart = inst.restarts ?? 0;
+    following.set(inst.name, stream);
     onStream(stream, (frame) => {
       if (frame.type === 'log') {
         const lines = seen
@@ -253,13 +257,38 @@ export function createLocalRuntime({ store, servers, hub, resolveSecrets = async
           i.logAt = last;
         }).catch(() => {});
       }
-      if (frame.type === 'stream-end') streams.delete(stream);
+      if (frame.type === 'stream-end') {
+        streams.delete(stream);
+        if (following.get(inst.name) === stream) following.delete(inst.name);
+        // The container stopped. If Docker has restarted it already (the stats saw it first), follow it again.
+        refollow(inst.name, restartsAtStart).catch(() => {});
+      }
     });
     try {
       await hub.command(inst.server, 'logs.follow', { name: inst.name, stream, ...(since ? { since } : {}) });
     } catch (err) {
+      if (following.get(inst.name) === stream) following.delete(inst.name);
       streams.delete(stream);
       log.warn(`could not follow ${inst.name}: ${err.message}`);
+    }
+  }
+
+  /**
+   * Follows a container again after Docker restarted it (8.2 R7, 8.5 R5): `docker logs --follow` ends when the
+   * container stops. Both the end of a follow and the stats' higher restart count call this; whichever comes second
+   * finds the other has happened and resumes from the last line delivered.
+   */
+  const refollowing = new Set();
+  async function refollow(name, restartsBefore = -1) {
+    if (following.has(name) || refollowing.has(name)) return;
+    refollowing.add(name);
+    try {
+      const inst = (await read()).instances.find((i) => i.name === name);
+      if (!inst || !['running', 'starting'].includes(inst.status) || !hub.isOnline(inst.server)) return;
+      if ((inst.restarts ?? 0) <= restartsBefore || following.has(name)) return;
+      await follow(inst, inst.logAt ?? null);
+    } finally {
+      refollowing.delete(name);
     }
   }
 
@@ -506,6 +535,7 @@ export function createLocalRuntime({ store, servers, hub, resolveSecrets = async
         log.warn(`a crash listener failed: ${err.message}`);
       }
       if (gaveUp) endpointsChanged(tenantId, workload);
+      else await refollow(inst.name).catch((err) => log.warn(`could not follow ${inst.name} after its restart: ${err.message}`));
     }
   }
 

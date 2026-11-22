@@ -79,6 +79,24 @@ test('the real agent builds, runs, checks, follows and removes a Node app on thi
     assert.ok(Number.isFinite(st.cpu) && st.cpu >= 0);
     assert.ok(Number.isInteger(st.rxBytes) && Number.isInteger(st.txBytes));
 
+    // 8.2 R7 on this Docker: the app is killed, Docker restarts it (on-failure), the follow ends with the run, and
+    // states() gives the exit code of the run that ended, not the 0 a running container reports.
+    let ended = false;
+    const stopFollow = await docker.logs(name, {}, () => {}, () => { ended = true; });
+    const kill = "const fs=require('fs');for(const p of fs.readdirSync('/proc')){if(!/^\\d+$/.test(p))continue;let c='';try{c=fs.readFileSync('/proc/'+p+'/cmdline','utf8')}catch{}if(c==='node\\0server.js\\0')process.kill(+p,'SIGKILL')}";
+    execFileSync('docker', ['exec', name, 'node', '-e', kill]);
+    let after;
+    const until = Date.now() + 30_000;
+    while (Date.now() < until) {
+      [after] = await docker.states(labels);
+      if (after?.restarts === 1 && after.state === 'running') break;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    stopFollow();
+    assert.deepEqual([after.state, after.restarts], ['running', 1], JSON.stringify(after));
+    assert.ok(Number.isInteger(after.exitCode) && after.exitCode > 0, `the run that ended: ${JSON.stringify(after)}`);
+    assert.equal(ended, true, 'docker logs --follow ends when the container stops');
+
     assert.deepEqual((await docker.list(ok('container.list', { labels }).labels)).map((x) => x.name), [name]);
     await docker.remove(name);
     assert.deepEqual(await docker.list(labels), []);

@@ -244,10 +244,26 @@ export function createMockDocker({ facts = {}, now = () => Date.now(), registry 
         .map((c) => ({ name: c.name, state: c.state, exitCode: c.exitCode, restarts: c.restarts }));
     },
 
+    /**
+     * What `docker stats` would say. Unless a test set the usage (setUsage), CPU and memory drift slowly within the
+     * container's limits and the network counters grow, so a demo's charts move (they are not real numbers).
+     */
     async stats(labels) {
+      const nowS = Date.now() / 1000;
       return (await this.list(labels)).filter((c) => c.state === 'running').map((c) => {
-        const { args, usage } = containers.get(c.name);
-        return { name: c.name, cpu: 0.02, cpuLimit: args.cpu, memoryMb: 48, memoryLimitMb: args.memoryMb, rxBytes: 1024, txBytes: 2048, pids: 7, ...usage };
+        const rec = containers.get(c.name);
+        const { args, usage } = rec;
+        rec.statsFrom ??= nowS;
+        const phase = [...c.name].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) % 997, 7) / 97;
+        const wave = (periodS) => (1 + Math.sin(nowS / periodS + phase)) / 2;
+        const up = Math.max(1, nowS - rec.statsFrom);
+        return {
+          name: c.name, cpuLimit: args.cpu, memoryLimitMb: args.memoryMb, pids: 7,
+          cpu: Math.round((args.cpu ?? 1) * (0.04 + 0.3 * wave(45)) * 1000) / 1000,
+          memoryMb: Math.round((args.memoryMb ?? 512) * (0.18 + 0.12 * wave(240))),
+          rxBytes: Math.round(1024 + up * 700), txBytes: Math.round(2048 + up * 2100),
+          ...usage,
+        };
       });
     },
     /** Test hook: what stats() reports for a container from now on (cpu, memoryMb, rxBytes, txBytes). */
@@ -257,13 +273,19 @@ export function createMockDocker({ facts = {}, now = () => Date.now(), registry 
     },
 
     // ---- for tests ------------------------------------------------------------------------------
-    /** The container exits with `exitCode`; Docker restarts it up to 5 times (on-failure:5), then leaves it exited. */
+    /**
+     * The container exits with `exitCode`; Docker restarts it up to 5 times (on-failure:5), then leaves it exited.
+     * Like `docker logs --follow`, a follow ends when the container stops; lines written after the restart wait for
+     * the next follow (emit() them after crash()).
+     */
     crash(name, exitCode = 1) {
       const c = containers.get(name);
       c.exitCode = exitCode;
       if (c.restarts >= 5) c.state = 'exited';
       else c.restarts += 1;
       write(c, 'stderr', `exited with code ${exitCode}`);
+      for (const f of [...c.followers]) f.onEnd();
+      c.followers.clear();
     },
     /** What `host` resolves to from container `from`: a running container with that alias on a network `from` is on. */
     resolve(from, host) {

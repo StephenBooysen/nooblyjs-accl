@@ -770,6 +770,21 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
           const w = await mustGet(tenantId, name);
           return localRuntime?.handles(w.region) ? localRuntime.endpoints(tenantId, name) : [];
         },
+        /**
+         * A workload's instances (spec 8.5; a launcher's instance tiles): [{ instance, server, status, startedAt,
+         * restarts, lastExitCode, plan: { cpu, memoryMb } }], oldest first. status: starting, running, crashed,
+         * stopped or unknown (its server is offline, spec 8.9 R7).
+         */
+        async instances(tenantId, name) {
+          const w = await mustGet(tenantId, name);
+          const labels = { 'noobly-install': await config.installId(), 'noobly-tenant': tenantId, 'noobly-workload': w.name };
+          return (await runtime.list({ labels }))
+            .map((c) => ({
+              instance: c.name ?? c.id, server: c.server ?? null, status: c.status ?? 'unknown', startedAt: c.startedAt ?? null,
+              restarts: c.restarts ?? 0, lastExitCode: c.lastExitCode ?? null, plan: { cpu: c.cpu ?? w.plan.cpu, memoryMb: c.memoryMb ?? w.plan.memoryMb },
+            }))
+            .sort((a, b) => String(a.startedAt).localeCompare(String(b.startedAt)) || a.instance.localeCompare(b.instance));
+        },
         /** A workload's private name for its tenant's other workloads (spec 8.2 R5), or null for kinds without a port. */
         internalHost: (tenantId, w) => (HTTP_KINDS.has(w?.kind) ? internalHost(tenantId, w.name) : null),
         /** Requests, bytes out and 5xx through the ingress over the last `hours` (spec 8.4 R7), and the last request. */

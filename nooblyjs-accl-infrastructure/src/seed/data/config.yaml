@@ -1,2 +1,2 @@
-installId: nc-seed01
+installId: {{install}}
 createdAt: '{{ago:30d}}'

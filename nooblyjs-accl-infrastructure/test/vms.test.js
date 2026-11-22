@@ -3,6 +3,8 @@
 // half-made launch; a failure says why and retries; health; SSH keys; and the cost of a VM stopped mid-month.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { startApp } from './helpers.js';
 
 const API = '/infrastructure/api/v1';
@@ -37,7 +39,8 @@ test('a Contributor launches a VM: 202 Starting, then three steps on the mock cl
     assert.deepEqual(cloudVm.firewall, [{ port: 22, from: '127.0.0.1/32', why: 'ssh' }], 'SSH from the person\'s address only');
     const userData = JSON.parse(cloudVm.userData.slice('#cloud-config\n'.length));
     assert.match(userData.ssh_authorized_keys[0], /^ssh-ed25519 .* stevie@macbook$/);
-    assert.match(userData.users[1].ssh_authorized_keys[0], /^ssh-ed25519 \S+ noobly-cloud nc-seed01$/, 'the install\'s control key');
+    const install = /installId: (\S+)/.exec(await fs.readFile(path.join(t.dataDir, 'config.yaml'), 'utf8'))[1];
+    assert.equal(userData.users[1].ssh_authorized_keys[0].split(' ').slice(2).join(' '), `noobly-cloud ${install}`, 'the install\'s control key');
 
     const activity = (await t.get(`${API}/activity?kind=vm&limit=2`, { as: 'stevie' })).json.activity.map((a) => [a.verb, a.actor?.name]);
     assert.deepEqual(activity, [['Ready', 'Priya S.'], ['Created', 'Priya S.']]);

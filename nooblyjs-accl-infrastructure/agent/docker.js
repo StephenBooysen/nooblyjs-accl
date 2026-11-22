@@ -181,6 +181,24 @@ export function createDocker({ stateDir, docker = 'docker', git = 'git', caddyAd
     return file;
   }
 
+  /** `${container id}:${restart count}` → the exit code of the run before that restart (null if Docker did not say). */
+  const exitCodes = new Map();
+  /** The exit code in a restarted container's last `die` event, from the minutes before it started again. */
+  async function diedWith(c, restarts) {
+    const key = `${c.Id}:${restarts}`;
+    if (exitCodes.has(key)) return exitCodes.get(key);
+    const started = Math.floor(Date.parse(c.State?.StartedAt ?? '') / 1000);
+    let code = null;
+    if (Number.isFinite(started)) {
+      const r = await exec(docker, ['events', '--since', String(started - 600), '--until', String(started + 1), '--filter', `container=${c.Id}`, '--filter', 'event=die', '--format', '{{.Actor.Attributes.exitCode}}']).catch(() => null);
+      const last = String(r?.stdout ?? '').split('\n').map((l) => l.trim()).filter((l) => /^\d+$/.test(l)).at(-1);
+      code = last === undefined ? null : Number(last);
+    }
+    if (exitCodes.size > 1000) exitCodes.clear();
+    exitCodes.set(key, code);
+    return code;
+  }
+
   return {
     kind: 'docker',
 
@@ -395,19 +413,28 @@ export function createDocker({ stateDir, docker = 'docker', git = 'git', caddyAd
       };
     },
 
-    /** Every container of these labels: its state, exit code and how many times Docker restarted it (8.2 R7). */
+    /**
+     * Every container of these labels: its state, the exit code of its last run and how many times Docker restarted
+     * it (8.2 R7). A container Docker restarted and that runs again says exit code 0; the code of the run that ended
+     * is in its `die` event, read once per restart.
+     */
     async states(labels) {
       const names = (await this.list(labels)).map((c) => c.name);
       if (!names.length) return [];
       const r = await exec(docker, ['inspect', '--type', 'container', '--format', '{{json .}}', '--', ...names]);
-      return String(r.stdout).split('\n').filter(Boolean).map((l) => {
+      const rows = String(r.stdout).split('\n').filter(Boolean).map((l) => {
         try {
-          const c = JSON.parse(l);
-          return { name: c.Name.replace(/^\//, ''), state: c.State?.Status ?? 'unknown', exitCode: c.State?.ExitCode ?? null, restarts: c.RestartCount ?? 0 };
+          return JSON.parse(l);
         } catch {
           return null;
         }
       }).filter(Boolean);
+      return Promise.all(rows.map(async (c) => {
+        const restarts = c.RestartCount ?? 0;
+        let exitCode = c.State?.ExitCode ?? null;
+        if (restarts > 0 && c.State?.Status === 'running') exitCode = await diedWith(c, restarts);
+        return { name: c.Name.replace(/^\//, ''), state: c.State?.Status ?? 'unknown', exitCode, restarts };
+      }));
     },
 
     async stats(labels) {

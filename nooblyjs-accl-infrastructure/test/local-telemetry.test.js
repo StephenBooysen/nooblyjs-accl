@@ -102,6 +102,45 @@ test('8.9.9 log lines and stats reach telemetry.subscribe() and the events, with
   }
 });
 
+test('8.5 a workload\'s instances for the launcher\'s tiles: status, start time, restarts, the plan; the mock\'s stats drift', { timeout: 30_000 }, async () => {
+  const { app, platform } = await start();
+  try {
+    await platform.workloads.create(TENANT, spec({ instances: 2 }), { actor });
+    await app.hosted.idle();
+    const list = await platform.workloads.instances(TENANT, 'hello');
+    assert.equal(list.length, 2);
+    for (const i of list) {
+      assert.deepEqual([i.status, i.restarts, i.lastExitCode, i.plan], ['running', 0, null, { cpu: 0.5, memoryMb: 512 }]);
+      assert.ok(Date.parse(i.startedAt) <= Date.now());
+      assert.match(i.server, /^srv_/);
+    }
+    await assert.rejects(platform.workloads.instances('someone-else', 'hello'), (e) => e.code === 'not_found');
+
+    // A crash Docker restarts shows as a restart, with the exit code.
+    const docker = app.hosted.local.agent.docker;
+    docker.crash(list[0].instance, 137);
+    await app.hosted.local.runtime.statsNow(list[0].server);
+    assert.ok(await until(async () => (await platform.workloads.instances(TENANT, 'hello')).find((i) => i.instance === list[0].instance)?.restarts === 1));
+    assert.equal((await platform.workloads.instances(TENANT, 'hello')).find((i) => i.instance === list[0].instance).lastExitCode, 137);
+    // Its follow ended with the run; what it writes after the restart still arrives (followed again from the last line).
+    docker.emit(list[0].instance, 'back after the crash');
+    await app.hosted.local.runtime.statsNow(list[0].server);
+    assert.ok(await until(async () => (await platform.logs.tail(TENANT, 'hello')).lines.some((l) => l.line === 'back after the crash'), 5000), 'lines after a restart');
+    const exits = (await platform.logs.tail(TENANT, 'hello')).lines.filter((l) => l.line === 'exited with code 137');
+    assert.equal(exits.length, 1, 'the resume skips what was delivered');
+
+    // Without setUsage, the mock's numbers stay inside the plan's limits and its network counters only grow.
+    const [a, b] = [await docker.stats({}), await new Promise((r) => setTimeout(r, 20)).then(() => docker.stats({}))];
+    for (const x of [...a, ...b]) {
+      assert.ok(x.cpu > 0 && x.cpu <= 0.5, `cpu ${x.cpu}`);
+      assert.ok(x.memoryMb > 0 && x.memoryMb <= 512, `memory ${x.memoryMb}`);
+    }
+    assert.ok(b[0].txBytes >= a[0].txBytes);
+  } finally {
+    await app.close();
+  }
+});
+
 test('8.9.9 a server that drops and returns resumes its logs: no line lost, none twice; its samples stop meanwhile', { timeout: 30_000 }, async () => {
   const { app, platform } = await start();
   try {
