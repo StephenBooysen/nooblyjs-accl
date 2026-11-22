@@ -1,0 +1,8 @@
+current: dep_seedsto01
+switchedAt: '{{ago:3d}}'
+deploys:
+  - deployId: dep_seedsto01
+    commit: 3be19f4
+    at: '{{ago:3d}}'
+    files: 4
+    bytes: 1222

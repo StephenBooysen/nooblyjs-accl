@@ -23,7 +23,7 @@
 import crypto from 'node:crypto';
 import { CloudError } from '../providers/errors.js';
 import { hasLabels } from '../providers/contract.js';
-import { HOST_PORTS } from '../../agent/protocol.js';
+import { HOST_PORTS, MAX_EXPORT_BYTES } from '../../agent/protocol.js';
 import { place as placeInstances } from './placement.js';
 
 const FILE = ['local', 'instances.yaml'];
@@ -825,7 +825,7 @@ export function createLocalRuntime({ store, servers, hub, resolveSecrets = async
      * server. A prebuilt image (R7) is not built: hosts pull it. Build-time variables (R5) go to the build as a secret.
      * Resolves { image, commit }.
      */
-    async build({ labels, commit, source = {}, runtime, build = {}, buildEnv = [], region, deployId, signal, log: log_ = async () => {} }) {
+    async build({ labels, commit, source = {}, runtime, build = {}, buildEnv = [], region, deployId, once = false, signal, log: log_ = async () => {} }) {
       const site = await siteOf(region);
       const sha = /^[0-9a-f]{7,40}$/.test(commit ?? '') ? commit : null;
       const tagOf = (version) => `noobly/${tenantHash(labels)}/${labels['noobly-workload']}:${version}`;
@@ -867,7 +867,8 @@ export function createLocalRuntime({ store, servers, hub, resolveSecrets = async
         }
       }
 
-      const targets = await onlineServers(site);
+      // A static site (spec 8.8) is built once: its files are exported and served by the platform, not run on servers.
+      const targets = (await onlineServers(site)).slice(0, once ? 1 : undefined);
       if (!targets.length && site.kind === 'site') throw new CloudError('unavailable', noneOnline(site));
       if (site.kind === 'region' && targets.length) await log_(`${region} has no builder pool: building on its hosts`);
       let actual = sha;
@@ -881,6 +882,37 @@ export function createLocalRuntime({ store, servers, hub, resolveSecrets = async
         await images.record(tag, { labels: agentLabels(labels), args, ...(buildEnv.length ? { buildEnv: refsOf(buildEnv) } : {}) }, server.id);
       }
       return { image: tag, commit: actual };
+    },
+
+    /**
+     * A static site's files (spec 8.8 R1): the publish directory of `image`, copied out on a server that built it, as
+     * one tar (checked against the agent's length and SHA-256). → Buffer
+     */
+    async exportSite({ labels, image, publishDir = 'dist', region, maxBytes = MAX_EXPORT_BYTES, signal, log: log_ = async () => {} }) {
+      const site = await siteOf(region);
+      const built = (await images.read()).images[image]?.builtOn ?? [];
+      const server = (await onlineServers(site)).find((x) => built.includes(x.id));
+      if (!server) throw new CloudError('unavailable', `The server that built ${image} is offline: deploy again to build it on another.`);
+      const stream = `x-${rand(12)}`;
+      const parts = [];
+      let got = 0;
+      onStream(stream, (frame) => {
+        if (frame.type !== 'chunk') return;
+        parts[frame.seq] = Buffer.from(frame.data, 'base64');
+        got += parts[frame.seq].length;
+      });
+      try {
+        if (signal?.aborted) throw signal.reason ?? new Error('aborted');
+        await log_(`Copying the publish directory (${publishDir}) from the built image on ${server.hostname}`);
+        const r = await send(server.id, 'site.export', { tag: image, labels: agentLabels(labels), dir: publishDir, maxBytes, stream }, { timeoutMs: 10 * 60_000 });
+        const tar = Buffer.concat(parts.filter(Boolean));
+        if (tar.length !== r.bytes || got !== r.bytes || crypto.createHash('sha256').update(tar).digest('hex') !== r.sha256) {
+          throw new CloudError('unavailable', 'The site\'s files did not arrive whole: deploy again.');
+        }
+        return tar;
+      } finally {
+        streams.delete(stream);
+      }
     },
 
     /**

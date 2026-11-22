@@ -127,6 +127,15 @@ export function startSession({ transport, docker, identity, facts = async () => 
       }
     },
     'image.remove': async (a) => docker.removeImage(a.tag),
+    'site.export': async (a) => {
+      ownLabels(a.labels);
+      let seq = 0;
+      try {
+        return await docker.exportSite(a, (buf) => send({ type: 'chunk', stream: a.stream, seq: seq++, data: buf.toString('base64') }));
+      } finally {
+        send({ type: 'stream-end', stream: a.stream });
+      }
+    },
     'ingress.sync': async (a) => docker.ingressSync(a),
     'ingress.counters': async () => ({ hosts: await docker.ingressCounters() }),
     'container.run': async (a) => {

@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { dockerfileFor, BASES } from './docker.js';
+import { pack } from './tar.js';
 
 // Docker, faked in memory (spec 8.9.1, "Mock and tests"): the same interface as docker.js (8.9.5), so the mock agent
 // runs the real agent session over it. Containers keep their run arguments, so tests can check the limits and flags
@@ -7,7 +8,8 @@ import { dockerfileFor, BASES } from './docker.js';
 // call of an operation fail; `crash()` makes a container exit as Docker's restart policy sees it; `resolve()` answers a
 // private name as Docker's DNS would on the networks a container is on; `holdJobs()` keeps jobs running until let go,
 // and `holdBuilds()` builds. Pushes and pulls go to `registry` (the mock cloud's, spec 8.3): { push(ref, image, auth),
-// pull(ref, auth) → image | null }; without one, a pull of a public reference just works.
+// pull(ref, auth) → image | null }; without one, a pull of a public reference just works. `siteFiles(fn)` sets what a
+// static site's export finds (spec 8.8): fn(args) → [{ path, data }] under the publish directory, or null for none.
 
 /**
  * @param {{ facts?: object, now?: () => number, registry?: object, network?: Map<string, object> }} [o]
@@ -31,6 +33,18 @@ export function createMockDocker({ facts = {}, now = () => Date.now(), registry 
   let ingress = null; // the last ingress.sync's arguments (a mock ingress VM)
   const served = {}; // host → { requests, bytesOut, errors }
   const turn = new Map(); // site id → round-robin position
+  let siteFilesOf = null; // (args) → [{ path, data }] | null: a static site's built files (spec 8.8)
+  const exports = []; // each site.export's { tag, dir }, oldest first
+
+  /** A small built site: an index page naming the image, a hashed script and an about page. */
+  function defaultSite(args) {
+    const h = `a1${crypto.createHash('sha256').update(args.tag).digest('hex').slice(0, 6)}`;
+    return [
+      { path: 'index.html', data: `<!doctype html><title>Site</title><h1>Built from ${args.tag}</h1><script src="./assets/app-${h}.js"></script>` },
+      { path: `assets/app-${h}.js`, data: `console.log(${JSON.stringify(args.tag)});` },
+      { path: 'about.html', data: '<!doctype html><title>About</title><p>About.</p>' },
+    ];
+  }
 
   const fail = (op) => {
     const f = failures.get(op);
@@ -125,6 +139,29 @@ export function createMockDocker({ facts = {}, now = () => Date.now(), registry 
     async removeImage(tag) {
       const removed = images.delete(tag);
       return { tag, removed };
+    },
+
+    /** Like docker.js: the publish directory as a tar under its own folder name, in chunks. */
+    async exportSite(args, onChunk) {
+      fail('site.export');
+      if (!images.has(args.tag)) throw new Error(`Error response from daemon: No such image: ${args.tag}`);
+      exports.push({ tag: args.tag, dir: args.dir });
+      const files = siteFilesOf ? siteFilesOf(args) : defaultSite(args);
+      if (!files) throw new Error(`There is no ${args.dir} folder after the build: check that the build command writes the site there.`);
+      const root = args.dir === '.' ? 'app' : args.dir.split('/').at(-1);
+      const tar = pack([{ path: root, type: '5' }, ...files.map((f) => ({ ...f, path: `${root}/${f.path}` }))]);
+      if (tar.length > args.maxBytes) throw new Error(`The publish directory is over ${Math.round(args.maxBytes / 1048576)} MB.`);
+      const size = args.chunkBytes ?? 512 * 1024;
+      for (let i = 0; i < tar.length; i += size) onChunk(tar.subarray(i, i + size));
+      return { bytes: tar.length, sha256: crypto.createHash('sha256').update(tar).digest('hex') };
+    },
+    /** What the next static site exports find: fn(args) → [{ path, data }], or null for "no such folder". */
+    siteFiles(fn) {
+      siteFilesOf = fn;
+    },
+    /** The site exports so far: { tag, dir }. */
+    get exports() {
+      return exports;
     },
 
     async ingressSync(a) {
