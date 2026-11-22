@@ -257,6 +257,25 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
     await emit('infrastructure.deploy.succeeded', { tenantId, workload: name, deployId, commit: commit ?? null, status: 'live' }, ctx.op.requestedBy);
   }
 
+  /**
+   * A scale that failed removed only what it had started, so what runs is what ran before: the record says so again
+   * (unless it has been changed since), and the launcher hears why.
+   */
+  async function scaleFailed(ctx, err) {
+    const tenantId = ctx.op.tenant;
+    const name = ctx.op.resource.name;
+    const { instances, plan, from } = ctx.input ?? {};
+    const reason = ctx.op.error?.message ?? (isCloudError(err) ? err.message : 'Something went wrong. It has been logged.');
+    if (!from) return;
+    let reverted = false;
+    await repos.workloads.update(tenantId, name, (r) => {
+      if (!r || r.instances !== instances || !same(r.plan, plan)) return r;
+      reverted = true;
+      return { ...r, instances: from.instances, plan: from.plan };
+    });
+    await emit('infrastructure.workload.scale_failed', { tenantId, workload: name, reason, reverted, instances: from.instances, plan: from.plan }, ctx.op.requestedBy);
+  }
+
   async function deployFailed(ctx, err) {
     const tenantId = ctx.op.tenant;
     const name = ctx.op.resource.name;
@@ -324,7 +343,7 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
     steps: [
       {
         key: 'rollout',
-        label: 'Restart at the new size',
+        label: 'Apply the new count or size',
         async run(ctx) {
           const w = await workloadOf(ctx);
           await runtime.rollout({ labels: await labelsOf(ctx), image: w.current.image, instances: w.instances, plan: w.plan, region: w.region, run: w.run, healthCheck: w.healthCheck, aliases: aliasesOf(ctx.op.tenant, w), resize: true, signal: ctx.signal, log: ctx.log });
@@ -341,6 +360,7 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
         },
       },
     ],
+    failed: scaleFailed,
   });
   const simple = (type, verb, label, key, stepLabel, action, after) => operations.define(type, {
     label: (op) => `${label} ${name_(op)}`,
@@ -386,6 +406,7 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
       if (w) await setStatus(ctx.op.tenant, w.name, w.statusBeforeDelete ?? 'failed');
     },
   });
+  const runFacts = (ctx) => ({ tenantId: ctx.op.tenant, workload: ctx.op.resource.name, runId: ctx.op.id, trigger: ctx.input?.trigger ?? 'manual' });
   operations.define('workload.job.run', {
     label: (op) => `Run ${name_(op)}`,
     verb: 'Running',
@@ -394,6 +415,7 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
       label: 'Run the job',
       async run(ctx) {
         const w = await workloadOf(ctx);
+        await emit('infrastructure.job.started', runFacts(ctx), ctx.op.requestedBy);
         // One run at a time per job (8.2 R6): the operations engine runs one operation per workload at a time.
         const result = await runtime.run({ labels: await labelsOf(ctx), image: w.current.image, command: ctx.input.command ?? w.run?.command ?? null, region: w.region, plan: w.plan, run: w.run, signal: ctx.signal, log: ctx.log });
         const kept = { exitCode: result.exitCode, durationMs: result.durationMs ?? null, peakMemoryMb: result.peakMemoryMb ?? null };
@@ -405,14 +427,28 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
       },
     }],
     async succeeded(ctx) {
-      await repos.workloads.update(ctx.op.tenant, ctx.op.resource.name, (w) => w && { ...w, lastRun: { operation: ctx.op.id, result: 'succeeded', exitCode: ctx.state.exitCode ?? 0, durationMs: ctx.state.durationMs ?? null, peakMemoryMb: ctx.state.peakMemoryMb ?? null, at: iso() } });
+      const kept = { exitCode: ctx.state.exitCode ?? 0, durationMs: ctx.state.durationMs ?? null, peakMemoryMb: ctx.state.peakMemoryMb ?? null };
+      await repos.workloads.update(ctx.op.tenant, ctx.op.resource.name, (w) => w && { ...w, lastRun: { operation: ctx.op.id, result: 'succeeded', ...kept, at: iso() } });
+      await emit('infrastructure.job.succeeded', { ...runFacts(ctx), ...kept }, ctx.op.requestedBy);
     },
-    async failed(ctx) {
-      await repos.workloads.update(ctx.op.tenant, ctx.op.resource.name, (w) => w && { ...w, lastRun: { operation: ctx.op.id, result: 'failed', exitCode: ctx.state.exitCode ?? null, durationMs: ctx.state.durationMs ?? null, peakMemoryMb: ctx.state.peakMemoryMb ?? null, at: iso() } });
+    async failed(ctx, err) {
+      const kept = { exitCode: ctx.state?.exitCode ?? null, durationMs: ctx.state?.durationMs ?? null, peakMemoryMb: ctx.state?.peakMemoryMb ?? null };
+      const reason = ctx.op.error?.message ?? (isCloudError(err) ? err.message : 'Something went wrong. It has been logged.');
+      await repos.workloads.update(ctx.op.tenant, ctx.op.resource.name, (w) => w && { ...w, lastRun: { operation: ctx.op.id, result: 'failed', ...kept, at: iso() } });
+      await emit('infrastructure.job.failed', { ...runFacts(ctx), ...kept, reason }, ctx.op.requestedBy);
     },
   });
 
   // ---------------------------------------------------------------- helpers for the API
+
+  function runView(o) {
+    return {
+      id: o.id, status: o.status, trigger: o.input.trigger ?? 'manual', command: o.input.command ?? null, requestedBy: o.requestedBy ?? null,
+      createdAt: o.createdAt, startedAt: o.startedAt, finishedAt: o.finishedAt,
+      exitCode: o.state.exitCode ?? null, durationMs: o.state.durationMs ?? null, peakMemoryMb: o.state.peakMemoryMb ?? null,
+      reason: o.status === 'failed' ? (o.error?.message ?? null) : null,
+    };
+  }
 
   async function mustGet(tenantId, name) {
     tenantOf(tenantId);
@@ -542,7 +578,7 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
         await setStatus(tenantId, name, 'deploying');
         ({ operation } = await startDeploy('workload.deploy', tenantId, updated, { trigger: 'config', actor: by, message: `Changed ${changed.join(', ')}` }));
       } else if (changed.some((k) => RESCALE.includes(k)) && w.current?.image && w.status !== 'suspended' && w.kind !== 'job') {
-        operation = await operations.start('workload.scale', { resource: resourceOf(tenantId, name), tenant: tenantId, input: { instances: checked.instances, plan: checked.plan }, person: by });
+        operation = await operations.start('workload.scale', { resource: resourceOf(tenantId, name), tenant: tenantId, input: { instances: checked.instances, plan: checked.plan, from: { instances: w.instances, plan: w.plan } }, person: by });
       }
       return { workload: view(await repos.workloads.get(tenantId, name)), operation };
     },
@@ -561,7 +597,11 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
       return { workload: view(await repos.workloads.get(tenantId, name)), operation };
     },
 
-    /** Changes the instance count or plan: a rolling restart, no rebuild. → { workload, operation } */
+    /**
+     * Changes the instance count or plan, no rebuild. A count alone adds or removes instances and leaves the others
+     * serving; a new plan starts every instance again at the new size, one set answering before the old one leaves.
+     * → { workload, operation }
+     */
     async scale(tenantId, name, { instances, plan } = {}, { actor } = {}) {
       const changes = {};
       if (instances !== undefined) changes.instances = instances;
@@ -635,16 +675,23 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
       return { workload: view(await repos.workloads.get(tenantId, name)), operation };
     },
 
-    /** Runs a job once (the launcher keeps any schedule). → { workload, operation } */
-    async runJob(tenantId, name, { command, actor } = {}) {
+    /**
+     * Runs a job once (the launcher keeps any schedule). One run at a time: while one is queued or running, another is
+     * refused (409), so a schedule that fires again skips rather than piling up. A run asked for during a deploy waits
+     * for it and runs the new image. trigger: manual or schedule. → { workload, operation }
+     */
+    async runJob(tenantId, name, { command, actor, trigger = 'manual' } = {}) {
       const w = await mustGet(tenantId, name);
       const by = actorOf(actor);
       if (w.kind !== 'job') throw unprocessable(`${name} is a ${w.kind}, not a job.`, { fields: { name: 'Not a job.' } });
       if (command !== undefined && command !== null && (typeof command !== 'string' || command.length > 500)) throw unprocessable('command is up to 500 characters.', { fields: { command: 'Up to 500 characters.' } });
+      if (!['manual', 'schedule'].includes(trigger)) throw unprocessable('trigger is manual or schedule.', { fields: { trigger: 'manual or schedule.' } });
       refuseWhile(w, ['deleting', 'suspended'], `${name} is ${w.status}.`);
       if (!w.current?.image) throw new HttpError(409, 'conflict', `${name} has no image yet. Wait for its first deploy.`);
-      await audit(by, 'workload.job.run', tenantId, name);
-      const operation = await operations.start('workload.job.run', { resource: resourceOf(tenantId, name), tenant: tenantId, input: { command: command ?? null }, person: by });
+      const running = (await operations.list({ resource: `workload:${tenantId}/${name}`, status: 'active' })).find((o) => o.type === 'workload.job.run');
+      if (running) throw new HttpError(409, 'conflict', `${name} is already running (since ${running.startedAt ?? running.createdAt}).`);
+      await audit(by, 'workload.job.run', tenantId, name, { trigger });
+      const operation = await operations.start('workload.job.run', { resource: resourceOf(tenantId, name), tenant: tenantId, input: { command: command ?? null, trigger }, person: by });
       return { workload: view(w), operation };
     },
   };
@@ -799,6 +846,26 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
         },
       },
       deploys,
+      /**
+       * A job's runs (spec 8.2 R6), newest first: runs(tenantId, name, { limit }) → { runs }; get(tenantId, name, runId)
+       * → the run with its log. A run: { id, status (queued, running, succeeded, failed, cancelled), trigger, command,
+       * requestedBy, createdAt, startedAt, finishedAt, exitCode, durationMs, peakMemoryMb, reason }.
+       */
+      jobs: {
+        async runs(tenantId, name, { limit = 20 } = {}) {
+          const w = await mustGet(tenantId, name);
+          if (w.kind !== 'job') throw unprocessable(`${name} is a ${w.kind}, not a job.`, { fields: { name: 'Not a job.' } });
+          const list = await operations.history({ resource: `workload:${tenantId}/${name}`, type: 'workload.job.run', limit: Math.min(100, Math.max(1, Number(limit) || 20)) });
+          return { runs: list.map(runView) };
+        },
+        async get(tenantId, name, runId) {
+          await mustGet(tenantId, name);
+          const [found] = (await operations.history({ resource: `workload:${tenantId}/${name}`, type: 'workload.job.run', limit: 10_000 })).filter((o) => o.id === runId);
+          if (!found) throw notFound(`No run ${runId}.`);
+          const { log: lines } = await operations.get(runId);
+          return { ...runView(found), log: lines };
+        },
+      },
       usage,
       capacity,
       /**

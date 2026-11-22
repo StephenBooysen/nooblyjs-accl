@@ -99,7 +99,8 @@ export async function startApp({ mountPath = '/infrastructure', changeHost = (h)
     async close() {
       await hosted?.close();
       await new Promise((resolve) => server.close(resolve));
-      await fs.rm(rootDir, { recursive: true, force: true });
+      // maxRetries: a write still landing as the app closes (ENOTEMPTY) is retried, not a failure.
+      await fs.rm(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     },
   };
 }

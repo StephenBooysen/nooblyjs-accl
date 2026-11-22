@@ -421,6 +421,17 @@ export function createOperations({ repos, host, log, queue, providers, secrets, 
       if (!op) throw notFound(`No operation ${id}.`);
       return { ...view(op), log: parseLog(op.body) };
     },
+    /**
+     * Newest first, each with its input and kept state, for a caller that shows its own history (a job's runs).
+     * `resource` is 'type:name'.
+     */
+    async history({ resource, type, limit = 50 } = {}) {
+      return (await repos.operations.list())
+        .filter((op) => resourceKey(op.resource) === resource && (!type || op.type === type))
+        .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+        .slice(0, Math.max(1, limit))
+        .map((op) => ({ ...view(op), input: op.input ?? {}, state: op.state ?? {} }));
+    },
     /** Newest first. `resource` is 'type:name'; status 'active' keeps the ones still going. */
     async list({ resource, status, account, tenant } = {}) {
       return (await repos.operations.list())

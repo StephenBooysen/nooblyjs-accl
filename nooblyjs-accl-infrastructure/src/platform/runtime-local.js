@@ -394,6 +394,66 @@ export function createLocalRuntime({ store, servers, hub, resolveSecrets = async
    * rotation and stop, and any old ones already stopped start again. `resize` with the same image and plan (a count
    * change) adds or removes instances without touching the others.
    */
+  /**
+   * A count change without an ingress (local sites, regions without one): `live` all run `image` at `plan`. Adding
+   * starts the new ones, waits until they answer, then puts them in the endpoints; removing takes the extra ones out of
+   * the endpoints first (the newest on the busiest server, so the rest stay spread), gives requests in flight drainMs,
+   * then removes them. The instances that stay are never restarted. A failed start removes only the new ones.
+   */
+  async function recount({ site, labels, image, plan, run, healthCheck, aliases, live, instances, signal, log_ }) {
+    const tenantId = labels['noobly-tenant'];
+    const workload = labels['noobly-workload'];
+    const plural = (n) => `${n} instance${n === 1 ? '' : 's'}`;
+    if (instances < live.length) {
+      const keep = [...live];
+      const gone = [];
+      while (keep.length > instances) {
+        const per = new Map();
+        for (const i of keep) per.set(i.server, (per.get(i.server) ?? 0) + 1);
+        const busiest = Math.max(...per.values());
+        gone.push(...keep.splice(keep.findLastIndex((i) => per.get(i.server) === busiest), 1));
+      }
+      await change((st) => { st.instances = st.instances.filter((i) => !gone.some((g) => g.name === i.name)); });
+      endpointsChanged(tenantId, workload);
+      if (drainMs > 0) await sleep(drainMs);
+      for (const o of gone) await hub.command(o.server, 'container.remove', { name: o.name }).catch((err) => log.warn(`could not remove ${o.name}: ${err.message}`));
+      await log_(`Stopped ${plural(gone.length)}; ${plural(keep.length)} still serving, not restarted`);
+      return [];
+    }
+    if (instances === live.length) return [];
+
+    const picks = await choose({ site, plan, count: instances - live.length, labels, log: log_, signal });
+    for (const s of new Set(picks)) await ensureImage(s, image, log_);
+    const network = `noobly-t-${tenantHash(labels)}`;
+    for (const s of new Set(picks)) await send(s.id, 'network.ensure', { name: network, labels: { ...agentLabels(labels), 'noobly-workload': 'network' } });
+    const taken = new Set((await read()).instances.filter((i) => i.hostPort).map((i) => `${i.server}:${i.hostPort}`));
+    const fresh = [];
+    try {
+      for (const s of picks) {
+        if (signal?.aborted) throw signal.reason ?? new Error('aborted');
+        const inst = { ...await startInstance({ site, server: s, labels, image, plan, run, tenantId, network, taken, aliases }), run: runOf(run), healthPath: healthCheck?.path ?? '/' };
+        fresh.push(inst);
+        await change((st) => { st.instances.push({ ...inst, status: 'starting' }); });
+        await follow(inst);
+        await log_(`Started ${inst.name} on ${s.hostname}${inst.hostPort ? ` (port ${inst.port} → ${inst.url})` : ''}`);
+      }
+      if (run?.port) {
+        const path = healthCheck?.path ?? '/';
+        await log_(`Waiting for ${fresh.length === 1 ? 'it' : `all ${fresh.length}`} to answer ${path} on port ${run.port}`);
+        for (const inst of fresh) await waitHealthy(inst, path, Math.min(MAX_HEALTH_S, healthCheck?.timeoutS ?? MAX_HEALTH_S), log_);
+        await log_('Healthy');
+      }
+    } catch (err) {
+      for (const inst of fresh) await hub.command(inst.server, 'container.remove', { name: inst.name }).catch(() => {});
+      await change((st) => { st.instances = st.instances.filter((i) => !fresh.some((f) => f.name === i.name)); });
+      throw err;
+    }
+    await change((st) => { for (const i of st.instances) if (fresh.some((f) => f.name === i.name)) i.status = 'running'; });
+    endpointsChanged(tenantId, workload);
+    await log_(`Added ${plural(fresh.length)}; the ${plural(live.length)} already serving ${live.length === 1 ? 'was' : 'were'} not restarted`);
+    return fresh;
+  }
+
   async function rolling({ site, labels, image, instances, plan, run, healthCheck, aliases, resize, signal, log_ }) {
     const tenantId = labels['noobly-tenant'];
     const region = site.id;
@@ -817,7 +877,8 @@ export function createLocalRuntime({ store, servers, hub, resolveSecrets = async
 
     /**
      * Starts `instances` new containers of `image`, checks their health, then removes the old ones (R7). A failure
-     * removes the new ones and leaves the old ones serving.
+     * removes the new ones and leaves the old ones serving. With `resize` (a scale) at the same image and plan, only the
+     * count changes: new instances join the ones serving, or the extra ones leave; the rest are not touched.
      */
     async rollout({ labels, image, instances, plan, region, run, healthCheck, aliases = [], resize = false, signal, log: log_ = async () => {} }) {
       const site = await siteOf(region);
@@ -825,6 +886,9 @@ export function createLocalRuntime({ store, servers, hub, resolveSecrets = async
       if (site.kind === 'region' && ingress && await ingress.has(region)) return rolling({ site, labels, image, instances, plan, run, healthCheck, aliases, resize, signal, log_ });
       const tenantId = labels['noobly-tenant'];
       const old = (await read()).instances.filter(ofWorkload(labels));
+      if (resize && old.length && old.every((o) => o.status === 'running' && o.image === image && o.cpu === plan.cpu && o.memoryMb === plan.memoryMb)) {
+        return recount({ site, labels, image, plan, run, healthCheck, aliases, live: old, instances, signal, log_ });
+      }
       // Placement (placement.js): spread over the hosts, counting what is reserved there except the old instances, which
       // go once the new ones answer; a full region grows by a host when its pool may (8.2 R4).
       const picks = await choose({ site, plan, count: instances, labels, except: old.map((o) => o.name), log: log_, signal });
@@ -914,13 +978,17 @@ export function createLocalRuntime({ store, servers, hub, resolveSecrets = async
       const [server] = await choose({ site, plan, count: 1, labels, log: log_, signal });
       await ensureImage(server, image, log_);
       const stream = `j-${rand(12)}`;
+      const name = `noobly-${tenantHash(labels).slice(0, 8)}-${labels['noobly-workload']}-run-${rand(6)}`;
       let chain = Promise.resolve();
       onStream(stream, (frame) => {
-        if (frame.type === 'log') for (const l of frame.lines) chain = chain.then(() => log_(l.line)).catch(() => {});
+        if (frame.type !== 'log') return;
+        // The run's own output: in the operation's log, and to telemetry like an instance's (spec 8.5), tagged with the run.
+        onLog(labels['noobly-tenant'], labels['noobly-workload'], frame.lines.map((l) => ({ ...l, instance: name })));
+        for (const l of frame.lines) chain = chain.then(() => log_(l.line)).catch(() => {});
       });
       try {
         const r = await send(server.id, 'job.run', {
-          name: `noobly-${tenantHash(labels).slice(0, 8)}-${labels['noobly-workload']}-run-${rand(6)}`, image, labels: agentLabels(labels), cpu: plan.cpu, memoryMb: plan.memoryMb, stream,
+          name, image, labels: agentLabels(labels), cpu: plan.cpu, memoryMb: plan.memoryMb, stream,
           env: await envFor(labels['noobly-tenant'], runSpec), ...(command ? { command: ['/bin/sh', '-c', command] } : {}),
         }, { timeoutMs: 24 * 3_600_000 });
         await chain;

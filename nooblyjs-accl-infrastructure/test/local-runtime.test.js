@@ -132,6 +132,95 @@ test('local site: a redeploy replaces the instances; a failed deploy keeps the o
   }
 });
 
+test('local site: a count change adds or removes instances and leaves the others running; a new plan replaces them all', async () => {
+  const { app, platform, docker } = await start();
+  try {
+    await platform.workloads.create(TENANT, spec({ instances: 1 }), { actor });
+    await app.hosted.idle();
+    const [first] = docker.state.containers;
+    const names = () => docker.state.containers.map((c) => c.name);
+    const serving = async () => (await platform.workloads.endpoints(TENANT, 'hello')).map((e) => e.instance).sort();
+
+    // 1 → 3: two join; the first is the same container, never restarted.
+    await platform.workloads.scale(TENANT, 'hello', { instances: 3 }, { actor });
+    await app.hosted.idle();
+    assert.equal(names().length, 3);
+    const kept = docker.state.containers.find((c) => c.name === first.name);
+    assert.ok(kept, 'the first instance still runs');
+    assert.equal(kept.startedAt, first.startedAt, 'not started again');
+    assert.deepEqual(await serving(), [...names()].sort(), 'all three serve');
+    const three = names();
+
+    // 3 → 2: one leaves the endpoints before it is removed; the other two are untouched.
+    const heard = [];
+    app.eventEmitter.on('infrastructure.workload.endpoints', async () => heard.push({ running: names(), endpoints: await serving() }));
+    await platform.workloads.scale(TENANT, 'hello', { instances: 2 }, { actor });
+    await app.hosted.idle();
+    assert.equal(names().length, 2);
+    assert.ok(names().every((n) => three.includes(n)), 'no new container');
+    assert.ok(names().includes(first.name), 'the newest went, not the first');
+    const [gone] = three.filter((n) => !names().includes(n));
+    assert.ok(heard.some((h) => h.endpoints.length === 2 && !h.endpoints.includes(gone) && h.running.includes(gone)), 'out of the endpoints while it still ran');
+    assert.deepEqual(await serving(), [...names()].sort());
+
+    // A failed start while adding: the two serving stay as they were.
+    const two = [...names()].sort();
+    const failures = [];
+    app.eventEmitter.on('infrastructure.workload.scale_failed', (e) => failures.push(e));
+    docker.failNext('container.run', 'No room (injected).', { after: 1 });
+    await platform.workloads.scale(TENANT, 'hello', { instances: 4 }, { actor });
+    await app.hosted.idle();
+    assert.deepEqual([...names()].sort(), two, 'the one that started was removed; the two serving were not touched');
+    assert.deepEqual(await serving(), two);
+    assert.equal((await platform.workloads.get(TENANT, 'hello')).instances, 2, 'the record says what runs');
+    assert.equal(failures.length, 1);
+    assert.deepEqual([failures[0].tenantId, failures[0].workload, failures[0].reverted, failures[0].instances], [TENANT, 'hello', true, 2]);
+    assert.match(failures[0].reason, /No room/);
+
+    // A new plan: every instance starts again at the new size.
+    const before = names();
+    await platform.workloads.scale(TENANT, 'hello', { instances: 2, plan: { cpu: 1, memoryMb: 1024 } }, { actor });
+    await app.hosted.idle();
+    assert.equal(names().length, 2);
+    assert.ok(names().every((n) => !before.includes(n)), 'all replaced');
+    assert.ok(docker.state.containers.every((c) => c.args.cpu === 1 && c.args.memoryMb === 1024));
+  } finally {
+    await app.close();
+  }
+});
+
+test('local site: a job run\'s output reaches telemetry tagged with the run; a failing run reports its exit code', async () => {
+  const { app, platform } = await start();
+  try {
+    const job = spec({ name: 'etl', kind: 'job', instances: 1, run: { command: 'node etl.js', env: [] } });
+    delete job.healthCheck;
+    await platform.workloads.create(TENANT, job, { actor });
+    await app.hosted.idle();
+    const lines = [];
+    const off = platform.telemetry.subscribe({ onLogs: (p) => lines.push(p) });
+    const ended = [];
+    for (const type of ['infrastructure.job.succeeded', 'infrastructure.job.failed']) app.eventEmitter.on(type, (e) => ended.push({ type, ...e }));
+
+    await platform.workloads.runJob(TENANT, 'etl', { actor });
+    await app.hosted.idle();
+    const got = lines.filter((p) => p.tenantId === TENANT && p.workload === 'etl').flatMap((p) => p.lines);
+    assert.deepEqual(got.map((l) => l.line), ['Running /bin/sh -c node etl.js', 'Done']);
+    assert.ok(got.every((l) => /^noobly-[0-9a-f]{8}-etl-run-[0-9a-z]{6}$/.test(l.instance) && l.stream === 'stdout' && l.at), JSON.stringify(got[0]));
+
+    await platform.workloads.runJob(TENANT, 'etl', { actor, command: 'node etl.js; exit 3' });
+    await app.hosted.idle();
+    off();
+    assert.deepEqual(ended.map((e) => [e.type, e.exitCode]), [['infrastructure.job.succeeded', 0], ['infrastructure.job.failed', 3]]);
+    assert.match(ended[1].reason, /exited with code 3/);
+    const { runs } = await platform.jobs.runs(TENANT, 'etl');
+    assert.deepEqual(runs.map((r) => [r.status, r.exitCode, r.command]), [['failed', 3, 'node etl.js; exit 3'], ['succeeded', 0, null]]);
+    assert.match(runs[0].reason, /exited with code 3/);
+    assert.ok(runs.every((r) => r.peakMemoryMb === 32 && typeof r.durationMs === 'number' && r.startedAt && r.finishedAt));
+  } finally {
+    await app.close();
+  }
+});
+
 test('local site: a host port something else holds is skipped', async () => {
   const { app, platform, docker } = await start();
   try {
