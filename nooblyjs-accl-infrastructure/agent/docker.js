@@ -14,6 +14,7 @@ import crypto from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { caddyConfig, parseMetrics } from './ingress.js';
+import { createRelays } from './relay.js';
 
 /** The runtime templates' base images, pinned by digest (spec 8.3.1; runtimes/bases.json, refreshed by a script). */
 const RUNTIMES_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'runtimes');
@@ -150,8 +151,18 @@ const toBytes = (s) => {
 /**
  * @param {{ stateDir: string, docker?: string, git?: string }} o   stateDir holds env files while containers are created
  */
-export function createDocker({ stateDir, docker = 'docker', git = 'git', caddyAdmin = 'http://127.0.0.1:2019' }) {
+export function createDocker({ stateDir, docker = 'docker', git = 'git', caddyAdmin = 'http://127.0.0.1:2019', relayTargets = [], log = {} }) {
   const envDir = path.join(stateDir, 'env');
+  // Database relays (spec 8.6 R2): a network's gateway address and subnet, from Docker.
+  const relays = createRelays({
+    stateDir, targets: relayTargets, log,
+    inspect: async (network) => {
+      const r = await exec(docker, ['network', 'inspect', '--format', '{{json .IPAM.Config}}', '--', network]);
+      if (r.code !== 0) return null;
+      const [cfg] = JSON.parse(r.stdout.trim() || '[]').filter((c) => /^\d+\.\d+\.\d+\.\d+$/.test(c.Gateway ?? ''));
+      return cfg ? { gateway: cfg.Gateway, subnet: cfg.Subnet } : null;
+    },
+  });
 
   /** Runs fn with a Docker config folder holding a registry login, deleted after (no credential stays on the server). */
   async function withLogin(auth, fn) {
@@ -317,6 +328,10 @@ export function createDocker({ stateDir, docker = 'docker', git = 'git', caddyAd
       if (!res.ok) throw new Error(`Caddy's metrics answered ${res.status}.`);
       return parseMetrics(await res.text());
     },
+
+    relayEnsure: (a) => relays.ensure(a),
+    relayRemove: (a) => relays.remove(a),
+    relays,
 
     /** Removes one of this install's image tags (an old version, spec 8.3 R6). */
     async removeImage(tag) {

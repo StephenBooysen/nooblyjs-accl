@@ -35,6 +35,7 @@ import { createSummary } from './src/services/summary.js';
 import { withWords } from './src/services/event-words.js';
 import { seed as seedStory } from './src/seed/index.js';
 import { createPlatform } from './src/platform/index.js';
+import { createLocalPostgres } from './src/platform/postgres-local.js';
 import { spawn } from 'node:child_process';
 import { createAgentHub } from './src/services/agents.js';
 import { createLocalServers } from './src/platform/local.js';
@@ -42,6 +43,7 @@ import { REPLACE_AFTER_MS } from './src/platform/runtime-local.js';
 import { createLocalProvider } from './src/providers/local/index.js';
 import { checkProvider } from './src/providers/contract.js';
 import { startMockAgent } from './agent/mock.js';
+import { createMockDocker } from './agent/docker-mock.js';
 import { agentFileRoutes, AGENT_PUBLIC } from './src/routes/agent-files.js';
 
 const NAME = 'infrastructure';
@@ -61,6 +63,8 @@ export const NAV = [
 ];
 
 /** The operators' row, added only when the platform layer is on (spec 8.1). */
+/** A stand-in Postgres engine for `local.postgres.engine` (launchers' tests and mock modes; spec 8.6). */
+export { createMockPostgres } from './src/platform/databases.js';
 export const PLATFORM_NAV = { key: 'platform', label: 'Platform', path: '/platform', icon: 'cube' };
 
 /** The cloud providers this install may use (INFRA_PROVIDERS, comma-separated; architecture.md §15). */
@@ -89,9 +93,12 @@ const envNumber = (name, fallback) => (process.env[name] === undefined || proces
  * @param {number} [options.jobCheckMs]   how often to check which jobs are due (INFRA_SYNC_CHECK_MS; 0: no timer)
  * @param {{ enabled?: boolean, resolveSecrets?: Function }} [options.platform]   the platform layer for a hosting launcher (spec 8.1);
  *   off unless enabled. resolveSecrets(tenantId, refs) opens the launcher's secretRefs when a container starts (8.9 R9).
- * @param {{ site?: { id: string, name?: string, bind?: string }, agent?: 'fork'|'mock'|null, controller?: string }} [options.local]
+ * @param {{ site?: { id: string, name?: string, bind?: string }, agent?: 'fork'|'mock'|null, controller?: string, postgres?: { url: string } }} [options.local]
  *   local servers (spec 8.9): a site to create on start, and in development an agent on this machine — 'fork' runs the
  *   real agent as a child process (Docker on this machine), 'mock' an in-process one (tests). Needs host.onUpgrade.
+ *   `postgres.url` (INFRA_LOCAL_POSTGRES_URL wins) is an admin login to the Postgres server the site's databases live on
+ *   (spec 8.6, decision of 2026-11-22); the development agent relays to it. It is never logged or stored.
+ * @param {number} [options.databaseCheckMs]   how often due database backups are looked for (0: never; tests)
  * @param {{ verify?: Function, checkMs?: number, offlineAfterMs?: number, heartbeatMs?: number }} [options.agents]
  *   local servers' agent channel (spec 8.9); on when the host offers onUpgrade. Tests override verify and the timings.
  * @param {string} [options.publicUrl]  the https:// address cloud VMs reach this app on (INFRA_PUBLIC_URL wins): pool
@@ -107,6 +114,7 @@ export async function mount(app, eventEmitter, serviceRegistry, {
   platform: platformOption = {},
   agents: agentOptions = {},
   local: localOption = {},
+  databaseCheckMs = jobCheckMs === 0 ? 0 : 60_000,
   publicUrl: publicUrlOption = null,
   git: gitOption = {},
 } = {}) {
@@ -169,6 +177,14 @@ export async function mount(app, eventEmitter, serviceRegistry, {
   // Local servers (spec 8.9): their records and the agent hub, when the launcher can pass WebSocket upgrades and runs
   // the platform layer. The hub's callbacks reach the platform's local runtime, made just below.
   const localServers = platformOn && typeof host.onUpgrade === 'function' ? createLocalServers({ store: host.store, config, now, log }) : null;
+  // The local site's Postgres server (spec 8.6): an admin URL, or (tests) an engine with the same calls.
+  const postgresUrl = (process.env.INFRA_LOCAL_POSTGRES_URL || localOption.postgres?.url || '').trim();
+  const localPostgres = !localServers ? null : localOption.postgres?.engine ?? (postgresUrl ? createLocalPostgres({ url: postgresUrl }) : null);
+  if (localPostgres) {
+    localPostgres.check()
+      .then((r) => log.info(`local Postgres ${localPostgres.server.host}:${localPostgres.server.port} answers (${r.version}); the local site's databases live there`))
+      .catch((err) => log.warn(`local Postgres ${localPostgres.server.host}:${localPostgres.server.port} does not answer: ${err.message}`));
+  }
   let platform = null;
   let stopping = false;
   const agents = typeof host.onUpgrade === 'function' ? createAgentHub({
@@ -197,8 +213,10 @@ export async function mount(app, eventEmitter, serviceRegistry, {
   platform = platformOn
     ? createPlatform({
       store: host.store, host, operations, config, catalog, log, now, mockStepMs, workloadsPerTenant: envNumber('INFRA_WORKLOADS_PER_TENANT', 100),
-      local: localServers ? { servers: localServers, hub: agents, statsEveryS: localOption.statsEveryS, drainMs: localOption.drainMs, poolDrainMs: localOption.poolDrainMs } : null,
+      local: localServers ? { servers: localServers, hub: agents, statsEveryS: localOption.statsEveryS, drainMs: localOption.drainMs, poolDrainMs: localOption.poolDrainMs, postgres: localPostgres } : null,
       resolveSecrets: platformOption.resolveSecrets,
+      secrets,
+      databaseCheckMs,
       emitRaw: (type, payload) => eventEmitter.emit(type, payload),
     })
     : null;
@@ -321,7 +339,7 @@ export async function mount(app, eventEmitter, serviceRegistry, {
     if (localOption.site) await localServers.ensureSite(localOption.site);
     for (const site of (await localServers.sites()).filter((s) => s.mode !== 'pool')) platform.addLocalSite(site.id);
     await pools?.start();
-    if (localOption.agent && localOption.site) localAgent = await startLocalAgent({ kind: localOption.agent, site: localOption.site.id, controller: localOption.controller, dataDir, localServers, agents, log });
+    if (localOption.agent && localOption.site) localAgent = await startLocalAgent({ kind: localOption.agent, site: localOption.site.id, controller: localOption.controller, dataDir, localServers, agents, log, relayTargets: localPostgres ? [`${localPostgres.server.host}:${localPostgres.server.port}`] : [] });
   }
 
   // Operations that were queued or under way when the server last stopped carry on; the jobs start ticking.
@@ -334,6 +352,7 @@ export async function mount(app, eventEmitter, serviceRegistry, {
       stopping = true;
       localAgent?.stop();
       pools?.stop();
+      platform?.databases?.stop();
       if (typeof stopUpgrades === 'function') stopUpgrades();
       await agents?.close();
       await jobs.close();
@@ -408,10 +427,10 @@ export async function mount(app, eventEmitter, serviceRegistry, {
  * 'fork' runs the real agent (agent/bin/noobly-agent.js) as a child process with --dev, its state in
  * <dataDir>/local-agent. Either enrols with a fresh one-time token the first time; the real one keeps its credential.
  */
-async function startLocalAgent({ kind, site, controller, dataDir, localServers, agents, log }) {
+async function startLocalAgent({ kind, site, controller, dataDir, localServers, agents, log, relayTargets = [] }) {
   if (kind === 'mock') {
     const { token } = await localServers.createEnrolment(site, { by: 'development' });
-    let agent = startMockAgent({ identity: { token } });
+    let agent = startMockAgent({ identity: { token }, docker: createMockDocker({ relayTargets }) });
     agents.attach(agent.transport, { address: '127.0.0.1' });
     const first = await agent.welcome;
     return {
@@ -435,7 +454,7 @@ async function startLocalAgent({ kind, site, controller, dataDir, localServers, 
   let child = null;
   let stopped = false;
   const start = () => {
-    child = spawn(process.execPath, [bin, 'run', '--controller', controller, '--state-dir', stateDir, '--dev'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    child = spawn(process.execPath, [bin, 'run', '--controller', controller, '--state-dir', stateDir, '--dev', ...relayTargets.flatMap((t) => ['--relay-target', t])], { env, stdio: ['ignore', 'pipe', 'pipe'] });
     for (const out of [child.stdout, child.stderr]) out.on('data', (d) => { for (const line of String(d).split('\n').filter(Boolean)) log.info(`[local agent] ${line.replace(/^\S+ noobly-agent /, '')}`); });
     child.on('exit', (code) => {
       child = null;

@@ -16,7 +16,8 @@ import { pack } from './tar.js';
  *   `network`: address → mock Docker, shared by the mock servers of one controller, so a mock ingress (spec 8.4) can
  *   reach containers on other mock hosts by their private address and published port.
  */
-export function createMockDocker({ facts = {}, now = () => Date.now(), registry = null, network = null } = {}) {
+export function createMockDocker({ facts = {}, now = () => Date.now(), registry = null, network = null, relayTargets = null } = {}) {
+  const relays = new Map();
   const networks = new Map();
   const images = new Map();
   const containers = new Map(); // name → { name, labels, state, args, lines: [{ out, at, line }], followers: Set }
@@ -156,6 +157,23 @@ export function createMockDocker({ facts = {}, now = () => Date.now(), registry 
       return { bytes: tar.length, sha256: crypto.createHash('sha256').update(tar).digest('hex') };
     },
     /** What the next static site exports find: fn(args) → [{ path, data }], or null for "no such folder". */
+    /** Relays (spec 8.6 R2): a made-up gateway per network, from the targets it was given (all, when none were). */
+    async relayEnsure({ network, target, port = 5432, databases = [] }) {
+      fail('relay.ensure');
+      if (relayTargets && !relayTargets.includes(target)) throw Object.assign(new Error(`This agent does not relay to ${target}. Start it with --relay-target ${target}.`), { code: 'refused' });
+      if (!networks.has(network)) throw new Error(`There is no network ${network} here.`);
+      const i = [...networks.keys()].indexOf(network);
+      const r = { host: `172.${30 + (i % 200)}.0.1`, port, subnet: `172.${30 + (i % 200)}.0.0/16`, target, databases: [...databases] };
+      relays.set(network, r);
+      return { host: r.host, port: r.port, subnet: r.subnet };
+    },
+    async relayRemove({ network }) {
+      return { removed: relays.delete(network) };
+    },
+    get relays() {
+      return [...relays.entries()].map(([network, r]) => ({ network, ...r }));
+    },
+
     siteFiles(fn) {
       siteFilesOf = fn;
     },

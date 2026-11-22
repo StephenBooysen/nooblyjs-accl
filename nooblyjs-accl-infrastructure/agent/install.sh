@@ -22,7 +22,7 @@ DEV=0
 PREFIX=/opt/noobly-agent
 STATE=/var/lib/noobly-agent
 CONF=/etc/noobly-agent
-FILES="package.json protocol.js core.js connect.js docker.js ingress.js bin/noobly-agent.js runtimes/bases.json runtimes/node22.Dockerfile runtimes/python312.Dockerfile runtimes/go123.Dockerfile"
+FILES="package.json protocol.js core.js connect.js docker.js ingress.js relay.js bin/noobly-agent.js runtimes/bases.json runtimes/node22.Dockerfile runtimes/python312.Dockerfile runtimes/go123.Dockerfile"
 
 say() { printf 'noobly-agent install: %s\n' "$*"; }
 fail() { printf 'noobly-agent install: %s\n' "$*" >&2; exit 1; }

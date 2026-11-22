@@ -137,6 +137,15 @@ export function startSession({ transport, docker, identity, facts = async () => 
       }
     },
     'ingress.sync': async (a) => docker.ingressSync(a),
+    'relay.ensure': async (a) => {
+      try {
+        return await docker.relayEnsure(a);
+      } catch (err) {
+        if (err.code === 'refused') throw new CommandError('refused', err.message);
+        throw err;
+      }
+    },
+    'relay.remove': async (a) => docker.relayRemove(a),
     'ingress.counters': async () => ({ hosts: await docker.ingressCounters() }),
     'container.run': async (a) => {
       ownLabels(a.labels);

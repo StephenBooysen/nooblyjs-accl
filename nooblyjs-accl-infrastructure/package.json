@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "nooblyjs-core": "file:../../nooblyjs-core",
+    "pg": "^8.23.1",
     "ssh2": "^1.16.0",
     "ws": "^8.23.0"
   },
