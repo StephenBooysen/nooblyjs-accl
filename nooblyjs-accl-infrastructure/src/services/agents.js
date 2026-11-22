@@ -39,7 +39,7 @@ export function isPrivateAddress(address) {
  *   accepts a hello or enrol frame (resolves with who it is) or refuses it (throws; its message is sent to the agent)
  * @param {(server: string, status: 'online'|'offline', session?: object) => void} [o.onStatus]
  * @param {(server: string, facts: object) => void} [o.onFacts]
- * @param {(server: string, frame: object) => void} [o.onStream]   log, stats and stream-end frames
+ * @param {(server: string, frame: object) => void} [o.onStream]   log, stats, chunk and stream-end frames
  * @param {() => number} [o.now]
  * @param {{ warn: Function, info: Function }} [o.log]
  * @param {number} [o.heartbeatMs]
@@ -156,6 +156,7 @@ export function createAgentHub({
         }
         case 'log':
         case 'stats':
+        case 'chunk':
         case 'stream-end':
           return onStream(session.server, frame);
         default:

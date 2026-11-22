@@ -8,6 +8,7 @@
 import crypto from 'node:crypto';
 import { CloudError } from '../providers/errors.js';
 import { hasLabels } from '../providers/contract.js';
+import { pack } from '../../agent/tar.js';
 
 const FILE = ['mock-cloud', 'platform.yaml'];
 const id = (prefix) => `${prefix}-${crypto.randomBytes(3).toString('hex')}`;
@@ -31,6 +32,8 @@ const sleep = (ms, signal) => new Promise((resolve, reject) => {
 export function createMockRuntime({ store, stepMs = 1200, now = () => Date.now() }) {
   /** [{ at, message, times }]: the next `times` calls at that step fail. */
   let failures = [];
+  /** A static site's built files (spec 8.8): (args) → [{ path, data }] | null; the default is a small site. */
+  let siteFilesOf = null;
   const iso = () => new Date(now()).toISOString();
 
   const read = async () => {
@@ -82,6 +85,23 @@ export function createMockRuntime({ store, stepMs = 1200, now = () => Date.now()
     },
 
     /** Replaces the workload's containers with `instances` new ones running `image`. Returns the new containers. */
+    /** A static site's files (spec 8.8): a small site naming the image, as the agent's export would send it. */
+    async exportSite({ image, publishDir = 'dist', signal, log = async () => {} }) {
+      await step('site.export', signal);
+      const h = `a1${crypto.createHash('sha256').update(String(image)).digest('hex').slice(0, 6)}`;
+      const files = siteFilesOf ? siteFilesOf({ image, publishDir }) : [
+        { path: 'index.html', data: `<!doctype html><title>Site</title><h1>Built from ${image}</h1><script src="./assets/app-${h}.js"></script>` },
+        { path: `assets/app-${h}.js`, data: `console.log(${JSON.stringify(String(image))});` },
+      ];
+      if (!files) throw new CloudError('invalid', `There is no ${publishDir} folder after the build: check that the build command writes the site there.`);
+      await log(`Copied ${publishDir} out of the build`);
+      const root = publishDir === '.' ? 'app' : publishDir.split('/').at(-1);
+      return pack(files.map((f) => ({ ...f, path: `${root}/${f.path}` })));
+    },
+    siteFiles(fn) {
+      siteFilesOf = fn;
+    },
+
     async rollout({ labels, image, instances, plan, region, signal, log = async () => {} }) {
       await step('workload.deploy.rollout', signal);
       const started = await change((s) => {

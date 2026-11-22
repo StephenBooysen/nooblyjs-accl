@@ -4,6 +4,7 @@
 import { unprocessable } from '../util/errors.js';
 import { isResourceName } from '../util/ids.js';
 import { isWorkloadName, KINDS, RUNTIMES, HTTP_KINDS } from './names.js';
+import { isPublishDir } from '../../agent/protocol.js';
 
 const REPO = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
 const IMAGE = /^[a-z0-9][a-z0-9._/:@-]{0,254}$/;
@@ -13,7 +14,7 @@ const HOSTNAME = /^(?=.{1,253}$)([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?\.)+[a-z]{2,6
 const LINKS = ['database', 'keyvalue', 'bucket'];
 
 /** What update() may change; name, kind, region and account are fixed once a workload exists. */
-export const CHANGEABLE = ['source', 'build', 'run', 'plan', 'instances', 'healthCheck', 'domains', 'autoDeploy', 'schedule', 'concurrency', 'sleep'];
+export const CHANGEABLE = ['source', 'build', 'run', 'plan', 'instances', 'healthCheck', 'domains', 'autoDeploy', 'schedule', 'concurrency', 'sleep', 'site'];
 /** Changes that need a new build and rollout; plan and instances need only a rolling restart (scale). */
 export const REDEPLOY = ['source', 'build', 'run'];
 export const RESCALE = ['plan', 'instances'];
@@ -88,6 +89,12 @@ export function checkSpec(input, { regions }) {
     if (!RUNTIMES.includes(runtime)) bad('build.runtime', `One of ${RUNTIMES.join(', ')}.`);
     for (const key of ['buildCommand', 'startCommand', 'dockerfile']) if (b[key] !== undefined && b[key] !== null && (!text(b[key], 500) || /[\r\n]/.test(b[key]))) bad(`build.${key}`, 'One line of up to 500 characters.');
     build = { runtime, buildCommand: b.buildCommand ?? null, startCommand: b.startCommand ?? null, dockerfile: runtime === 'dockerfile' ? (b.dockerfile ?? 'Dockerfile') : null };
+    // A static site's output folder (spec 8.8 R1), in the build's working directory; '.' publishes all of it.
+    if (kind === 'static') {
+      const publishDir = b.publishDir ?? 'dist';
+      if (!isPublishDir(publishDir)) bad('build.publishDir', 'A folder inside the build, such as dist or build/out, or . for all of it.');
+      build.publishDir = publishDir;
+    } else if (b.publishDir !== undefined && b.publishDir !== null) bad('build.publishDir', 'Only a static site publishes a folder.');
   }
 
   // Run: a port for the HTTP kinds, a command, the environment.
@@ -184,12 +191,21 @@ export function checkSpec(input, { regions }) {
   if (kind !== 'job' && concurrency !== null) bad('concurrency', 'Only a job has runs.');
   else if (kind === 'job' && (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > LIMITS.concurrency)) bad('concurrency', `From 1 to ${LIMITS.concurrency} runs at once.`);
 
+  // How a static site answers (spec 8.8 R5): spa sends paths with no file and no extension to /index.html.
+  const st = input.site ?? null;
+  let site = null;
+  if (kind === 'static') {
+    const v = st ?? {};
+    if (!isObject(v) || (v.spa !== undefined && typeof v.spa !== 'boolean')) bad('site.spa', 'true (a single-page app) or false.');
+    else site = { spa: v.spa ?? false };
+  } else if (st !== null) bad('site', 'Only a static site has site settings.');
+
   if (Object.keys(fields).length) {
     throw unprocessable(`Check ${Object.keys(fields).join(', ')}.`, { fields });
   }
   return {
     name: input.name, kind, region, account, source, build, run, plan: { cpu: plan.cpu, memoryMb: plan.memoryMb }, instances,
-    healthCheck, domains: [...domains], autoDeploy, sleep, ...(kind === 'job' ? { schedule, concurrency } : {}),
+    healthCheck, domains: [...domains], autoDeploy, sleep, ...(kind === 'job' ? { schedule, concurrency } : {}), ...(kind === 'static' ? { site } : {}),
   };
 }
 

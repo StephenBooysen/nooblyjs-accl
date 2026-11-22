@@ -13,11 +13,12 @@ import { inProgress } from '../services/operations.js';
 import { createPlatformRepos } from './repos.js';
 import { createMockRuntime } from './runtime-mock.js';
 import { createLocalRuntime } from './runtime-local.js';
+import { createSites, KEEP as SITE_KEEP } from './sites.js';
 import { checkSpec, specOf, same, isEnvKey, CHANGEABLE, REDEPLOY, RESCALE } from './spec.js';
 import { isTenantId, isWorkloadName, KINDS, STATUSES, HTTP_KINDS, internalHost } from './names.js';
 import { CloudError } from '../providers/errors.js';
 
-export const OPERATION_TYPES = ['workload.create', 'workload.deploy', 'workload.scale', 'workload.restart', 'workload.suspend', 'workload.resume', 'workload.sleep', 'workload.wake', 'workload.delete', 'workload.job.run'];
+export const OPERATION_TYPES = ['workload.create', 'workload.deploy', 'workload.scale', 'workload.restart', 'workload.suspend', 'workload.resume', 'workload.sleep', 'workload.wake', 'workload.delete', 'workload.job.run', 'site.create', 'site.deploy'];
 export const TRIGGERS = ['push', 'manual', 'config'];
 /** What may start a job's run: a person, the launcher's schedule, or the launcher's API (a task queue, 8.2 R6). */
 export const RUN_TRIGGERS = ['manual', 'schedule', 'api'];
@@ -59,6 +60,8 @@ function tenantOf(tenantId) {
 export function createPlatform({ store, host, operations, config, catalog, log, now, mockStepMs = 1200, workloadsPerTenant = 100, local = null, resolveSecrets, emitRaw = () => {} }) {
   const repos = createPlatformRepos(store, { log });
   const mockRuntime = createMockRuntime({ store, stepMs: mockStepMs, now });
+  // Static sites (spec 8.8): their files and how they are served, for local sites and the mock cloud.
+  const sites = createSites({ store, now, log });
   const iso = () => new Date(now()).toISOString();
   const regions = new Set(['gcp', 'aws'].flatMap((cloud) => (catalog.forCloud(cloud)?.regions ?? []).map((r) => r.id)));
 
@@ -143,10 +146,12 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
     setStatus: (a) => pick(a).setStatus(a),
     remove: (a) => pick(a).remove(a),
     run: (a) => pick(a).run(a),
+    exportSite: (a) => pick(a).exportSite(a),
     list: async (a) => [...await mockRuntime.list(a), ...(localRuntime ? await localRuntime.list(a) : [])],
     images: async (a) => [...await mockRuntime.images(a), ...(localRuntime ? await localRuntime.images(a) : [])],
     // The mock's test hooks.
     failAt: (...args) => mockRuntime.failAt(...args),
+    siteFiles: (fn) => mockRuntime.siteFiles(fn),
     outOfBand: (fn) => mockRuntime.outOfBand(fn),
     reset: () => mockRuntime.reset(),
   };
@@ -214,7 +219,7 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
           await ctx.save({ deployStarted: true });
         }
         const buildEnv = (w.run?.env ?? []).filter((e) => e.build === true);
-        const built = await runtime.build({ labels: await labelsOf(ctx), commit, source: w.source ?? {}, runtime: w.build?.runtime, build: w.build ?? {}, buildEnv, region: w.region, deployId, signal: ctx.signal, log });
+        const built = await runtime.build({ labels: await labelsOf(ctx), commit, source: w.source ?? {}, runtime: w.build?.runtime, build: w.build ?? {}, buildEnv, region: w.region, deployId, once: w.kind === 'static', signal: ctx.signal, log });
         const { image } = built;
         // A real build says which commit it built (the branch's latest when none was asked for).
         const builtCommit = built.commit && built.commit !== commit ? built.commit.slice(0, 40) : null;
@@ -242,6 +247,48 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
         const w = await workloadOf(ctx);
         if (w.kind === 'job') return { skipped: true, reason: 'a job has no health check' };
         await runtime.health({ labels: await labelsOf(ctx), path: w.healthCheck?.path ?? null, region: w.region, signal: ctx.signal, log: deployLog(ctx.op.tenant, w.name, ctx.input.deployId) });
+        return {};
+      },
+    },
+  ];
+
+  /**
+   * A static site's deploy (spec 8.8 R1, R2): the same build, then its publish directory is copied out and stored as a
+   * new deploy, then the site switches to it in one write. Nothing keeps running; the old files serve until the switch.
+   */
+  const siteSteps = [
+    deploySteps[0],
+    {
+      key: 'upload',
+      label: 'Upload the files',
+      async run(ctx) {
+        const w = await workloadOf(ctx);
+        const log = deployLog(ctx.op.tenant, w.name, ctx.input.deployId);
+        const tar = await runtime.exportSite({ labels: await labelsOf(ctx), image: ctx.state.image, publishDir: w.build?.publishDir ?? 'dist', region: w.region, signal: ctx.signal, log });
+        let r;
+        try {
+          r = await sites.publish(ctx.op.tenant, w.name, ctx.input.deployId, tar);
+        } catch (err) {
+          throw new CloudError('invalid', err.message);
+        }
+        const mb = (b) => (b < 1048576 ? `${Math.max(1, Math.round(b / 1024))} KB` : `${(b / 1048576).toFixed(1)} MB`);
+        await log(`Uploaded ${r.files} file${r.files === 1 ? '' : 's'} (${mb(r.bytes)}); ${r.added} new since the last deploy`);
+        for (const sk of r.skipped.slice(0, 5)) await log(`Skipped ${sk.path}: ${sk.why}`);
+        if (r.redirects || r.headers) await log(`Rules: ${r.redirects} redirect${r.redirects === 1 ? '' : 's'}, ${r.headers} header path${r.headers === 1 ? '' : 's'}`);
+        for (const pr of r.problems.slice(0, 10)) await log(`${pr.file} line ${pr.line} ignored: ${pr.message}`);
+        await emit('infrastructure.deploy.progress', { tenantId: ctx.op.tenant, workload: w.name, deployId: ctx.input.deployId, commit: ctx.state.commit ?? ctx.input.commit, status: 'deploying', step: 3, of: 3 }, ctx.op.requestedBy);
+        return { state: { files: r.files, bytes: r.bytes } };
+      },
+    },
+    {
+      key: 'switch',
+      label: 'Switch to the new files',
+      async run(ctx) {
+        const w = await workloadOf(ctx);
+        const r = await sites.setOrigin(ctx.op.tenant, w.name, ctx.input.deployId, { commit: ctx.state.commit ?? ctx.input.commit ?? null });
+        const log = deployLog(ctx.op.tenant, w.name, ctx.input.deployId);
+        await log(`Serving the new files${r.previous ? ` (the deploy before is kept for rollback, with up to ${SITE_KEEP} in all)` : ''}`);
+        if (r.removed.length) await log(`Removed ${r.removed.length} older deploy${r.removed.length === 1 ? '' : 's'}`);
         return {};
       },
     },
@@ -288,7 +335,11 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
     await deployLog(tenantId, name, deployId)(`Failed: ${reason}`);
     await repos.deploys.update(tenantId, name, deployId, (d) => d && { ...d, result: 'failed', endedAt: iso(), reason });
     const w = await repos.workloads.get(tenantId, name);
-    if (w?.current?.image && w.kind !== 'job') {
+    if (w?.current && w.kind === 'static') {
+      // A static site switches only at the end: the files before keep serving.
+      await deployLog(tenantId, name, deployId)(`Kept ${w.current.commit ?? w.current.deployId} serving`);
+      await setStatus(tenantId, name, 'live');
+    } else if (w?.current?.image && w.kind !== 'job') {
       // The deploy before this one keeps serving: put its instances back (8.4 makes the rollout itself zero-downtime).
       try {
         // The local runtime never stopped the old instances; the mock puts them back.
@@ -337,6 +388,22 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
     label: (op) => `Deploy ${name_(op)}${op.input.commit ? ` ${op.input.commit}` : ''}`,
     verb: 'Deploying',
     steps: deploySteps,
+    succeeded: deploySucceeded,
+    failed: deployFailed,
+    cancelled: deployCancelled,
+  });
+  operations.define('site.create', {
+    label: (op) => `Create ${name_(op)}`,
+    verb: 'Creating',
+    steps: siteSteps,
+    succeeded: deploySucceeded,
+    failed: deployFailed,
+    cancelled: deployCancelled,
+  });
+  operations.define('site.deploy', {
+    label: (op) => `Deploy ${name_(op)}${op.input.commit ? ` ${op.input.commit}` : ''}`,
+    verb: 'Deploying',
+    steps: siteSteps,
     succeeded: deploySucceeded,
     failed: deployFailed,
     cancelled: deployCancelled,
@@ -396,6 +463,10 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
         const w = await workloadOf(ctx);
         const removed = await runtime.remove({ labels: await labelsOf(ctx), region: w?.region, signal: ctx.signal });
         await ctx.log(`Removed ${removed} instance${removed === 1 ? '' : 's'}`);
+        if (w?.kind === 'static') {
+          await sites.remove(ctx.op.tenant, w.name);
+          await ctx.log('Removed the site\'s files');
+        }
         return {};
       },
     }],
@@ -496,7 +567,9 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
       id: deployId, commit: sha, message: message ?? (w.source?.repo ? `Latest on ${w.source.branch}` : `Image ${w.source?.image}`), trigger, by: actor,
       operation: null, image: null, result: 'queued', createdAt: iso(), startedAt: null, endedAt: null, body: lineOf(`Queued by ${actor?.name ?? 'the platform'} (${trigger})`),
     });
-    const operation = await operations.start(type, { resource: resourceOf(tenantId, w.name), tenant: tenantId, input: { deployId, commit: sha, trigger }, person: actor });
+    // A static site's deploy uploads and switches files instead of starting instances (spec 8.8).
+    const opType = w.kind === 'static' ? type.replace(/^workload\./, 'site.') : type;
+    const operation = await operations.start(opType, { resource: resourceOf(tenantId, w.name), tenant: tenantId, input: { deployId, commit: sha, trigger }, person: actor });
     await repos.deploys.update(tenantId, w.name, deployId, (d) => d && { ...d, operation: operation.id });
     return { operation, deployId };
   }
@@ -591,7 +664,7 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
       refuseWhile(w, ['deleting'], `${name} is being deleted.`);
       const merged = { ...specOf(w) };
       for (const [key, value] of Object.entries(changes)) {
-        const mergeable = ['source', 'build', 'run', 'healthCheck'].includes(key) && value && typeof value === 'object' && !Array.isArray(value) && merged[key];
+        const mergeable = ['source', 'build', 'run', 'healthCheck', 'site'].includes(key) && value && typeof value === 'object' && !Array.isArray(value) && merged[key];
         merged[key] = mergeable ? { ...merged[key], ...value } : value;
       }
       // A source that switches between repo and image replaces the old one.
@@ -764,6 +837,65 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
     },
   };
 
+  /**
+   * Static sites (spec 8.8) as the platform serves them (local sites, the mock cloud). respond() answers one request
+   * for a launcher's proxy; info() says what is served and what can be rolled back to; rollback() switches back.
+   */
+  const siteApi = {
+    /**
+     * One request: { method, path, query, headers } with the site's own path. → { status, headers, body, hit, file }
+     * A suspended site answers 503; a workload that is not a static site 404.
+     */
+    async respond(tenantId, name, req = {}) {
+      tenantOf(tenantId);
+      const w = isWorkloadName(name) ? await repos.workloads.get(tenantId, name) : null;
+      const plain = (status, text, extra = {}) => ({ status, headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-cache', ...extra }, body: req.method === 'HEAD' ? null : Buffer.from(text), hit: false, file: null });
+      if (!w || w.kind !== 'static') return plain(404, 'Not found.');
+      if (w.status === 'suspended') return plain(503, 'This site is suspended.', { 'retry-after': '3600' });
+      return sites.respond(tenantId, name, { ...req, spa: w.site?.spa ?? false });
+    },
+    /** → { current, switchedAt, deploys: [{ deployId, commit, at, files, bytes }], keep, stats: { requests, bytes, hits, since } } */
+    async info(tenantId, name) {
+      const w = await mustGet(tenantId, name);
+      if (w.kind !== 'static') throw unprocessable(`${name} is a ${w.kind}, not a static site.`, { fields: { name: 'Not a static site.' } });
+      return { ...await sites.info(tenantId, name), keep: SITE_KEEP, stats: sites.stats(tenantId, name) };
+    },
+    /**
+     * Serves an earlier deploy's files again, at once (R2): a new deploy record (trigger 'rollback', `serves` naming the
+     * deploy whose files it serves) that is live as soon as the switch is written. → { workload, deploy }
+     */
+    async rollback(tenantId, name, deployId, { actor } = {}) {
+      const w = await mustGet(tenantId, name);
+      const by = actorOf(actor);
+      if (w.kind !== 'static') throw unprocessable('Only a static site rolls back by switching its files.', { fields: { name: 'Not a static site.' } });
+      refuseWhile(w, ['deleting'], `${name} is being deleted.`);
+      refuseWhile(w, ['suspended'], `${name} is suspended. Resume it first.`);
+      if (await activeOp(tenantId, name)) throw conflict(`${name} is deploying: wait for it to finish, or cancel it.`);
+      const target = isGeneratedId(deployId) ? await repos.deploys.get(tenantId, name, deployId) : null;
+      if (!target) throw notFound(`No deploy ${deployId}.`);
+      const files = target.serves ?? target.id;
+      const kept = (await sites.info(tenantId, name)).deploys.map((d) => d.deployId);
+      if (!kept.includes(files)) throw conflict(`The files of that deploy are not kept any more: only the last ${SITE_KEEP + 1} deploys can be served again.`);
+      if ((w.current?.serves ?? w.current?.deployId) === files) throw conflict('That deploy is the one serving now.');
+      const id = newId('dep');
+      const at = iso();
+      const record = {
+        id, commit: target.commit ?? null, message: `Rollback to ${target.commit ? target.commit.slice(0, 7) : files}`, trigger: 'rollback', by, serves: files,
+        operation: null, image: target.image ?? null, result: 'deploying', createdAt: at, startedAt: at, endedAt: null, body: lineOf(`Rollback by ${by?.name ?? 'the platform'}: serving the files of ${files} again`),
+      };
+      await repos.deploys.write(tenantId, name, record);
+      await emit('infrastructure.deploy.started', { tenantId, workload: name, deployId: id, commit: record.commit, status: 'deploying', step: 1, of: 1, trigger: 'rollback' }, by);
+      await sites.setOrigin(tenantId, name, files);
+      await repos.deploys.update(tenantId, name, id, (d) => d && { ...d, result: 'live', endedAt: iso(), body: `${d.body}${lineOf('Serving')}` });
+      const previous = w.current?.deployId;
+      if (previous) await repos.deploys.update(tenantId, name, previous, (d) => d && d.result === 'live' && { ...d, result: 'superseded' });
+      await setStatus(tenantId, name, 'live', { current: { deployId: id, commit: record.commit, image: record.image, serves: files } });
+      await audit(by, 'workload.rolled_back', tenantId, name, { to: files, deploy: id });
+      await emit('infrastructure.deploy.succeeded', { tenantId, workload: name, deployId: id, commit: record.commit, status: 'live', trigger: 'rollback' }, by);
+      return { workload: view(await repos.workloads.get(tenantId, name)), deploy: deployView(await repos.deploys.get(tenantId, name, id)) };
+    },
+  };
+
   /** Reserved CPU and memory over a window, from the current plans (per-hour history arrives with 8.5). */
   async function usage(tenantId, { from, to } = {}) {
     tenantOf(tenantId);
@@ -895,6 +1027,7 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
         },
       },
       deploys,
+      staticSites: siteApi,
       /**
        * A job's runs (spec 8.2 R6), newest first: runs(tenantId, name, { limit }) → { runs }; get(tenantId, name, runId)
        * → the run with its log. A run: { id, status (queued, running, succeeded, failed, cancelled), trigger, command,

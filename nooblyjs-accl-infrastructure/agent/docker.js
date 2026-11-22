@@ -324,6 +324,69 @@ export function createDocker({ stateDir, docker = 'docker', git = 'git', caddyAd
       return { tag, removed: r.code === 0 };
     },
 
+    /**
+     * A static site's built files (spec 8.8 R1): a container is created from the image (never started), `dir` under
+     * the image's working directory is copied out as a tar (`docker cp <c>:<dir> -`, so everything sits under the
+     * folder's own name), handed to onChunk in pieces of up to `chunkBytes`, and the container removed. Stops at
+     * maxBytes. → { bytes, sha256 }
+     */
+    async exportSite({ tag, labels, dir, maxBytes, chunkBytes = 512 * 1024 }, onChunk) {
+      const work = (await must(docker, ['image', 'inspect', '--format', '{{.Config.WorkingDir}}', '--', tag])).stdout.trim() || '/';
+      const from = dir === '.' ? work : path.posix.join(work, dir);
+      const name = `noobly-export-${crypto.randomBytes(5).toString('hex')}`;
+      const labelArgs = Object.entries(labels).flatMap(([k, v]) => ['--label', `${k}=${v}`]);
+      await must(docker, ['create', '--name', name, ...labelArgs, '--network', 'none', '--', tag]);
+      try {
+        return await new Promise((resolve, reject) => {
+          const child = spawn(docker, ['cp', '--', `${name}:${from}`, '-'], { stdio: ['ignore', 'pipe', 'pipe'] });
+          const hash = crypto.createHash('sha256');
+          let bytes = 0;
+          let pending = [];
+          let pendingBytes = 0;
+          let stderr = '';
+          let failed = null;
+          const flush = () => {
+            if (!pendingBytes) return;
+            const buf = Buffer.concat(pending, pendingBytes);
+            pending = [];
+            pendingBytes = 0;
+            onChunk(buf);
+          };
+          child.stdout.on('data', (data) => {
+            if (failed) return;
+            bytes += data.length;
+            if (bytes > maxBytes) {
+              failed = new Error(`The publish directory is over ${Math.round(maxBytes / 1048576)} MB.`);
+              child.kill('SIGTERM');
+              return;
+            }
+            hash.update(data);
+            let rest = data;
+            while (rest.length) {
+              const room = chunkBytes - pendingBytes;
+              pending.push(rest.subarray(0, room));
+              pendingBytes += Math.min(room, rest.length);
+              rest = rest.subarray(room);
+              if (pendingBytes >= chunkBytes) flush();
+            }
+          });
+          child.stderr.on('data', (d) => { if (stderr.length < 4000) stderr += d; });
+          child.on('error', reject);
+          child.on('close', (code) => {
+            if (failed) return reject(failed);
+            if (code !== 0) {
+              const why = errorLine(stderr);
+              return reject(new Error(/could not find|no such file/i.test(why) ? `There is no ${dir} folder after the build: check that the build command writes the site there.` : (why || 'docker cp failed').slice(0, 500)));
+            }
+            flush();
+            return resolve({ bytes, sha256: hash.digest('hex') });
+          });
+        });
+      } finally {
+        await exec(docker, ['rm', '--force', '--', name]).catch(() => {});
+      }
+    },
+
     async run(a) {
       const envFile = await writeEnv(a.name, a.env);
       try {

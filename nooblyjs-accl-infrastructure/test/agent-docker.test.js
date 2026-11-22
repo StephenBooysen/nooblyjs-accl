@@ -10,6 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createDocker, errorLine } from '../agent/docker.js';
@@ -113,4 +114,46 @@ test('a failed docker command reports its cause, not the usage text after it', (
   assert.equal(errorLine('docker: Error response from daemon: Conflict. The container name "/a" is already in use.\nSee \'docker run --help\'.\n'), 'Error response from daemon: Conflict. The container name "/a" is already in use.');
   assert.equal(errorLine('fatal: repository not found\n'), 'fatal: repository not found');
   assert.equal(errorLine(''), '');
+});
+
+// Spec 8.8 on this Docker: a static site's build output comes back as a tar of its publish directory, under the
+// folder's own name, in chunks, with the length and SHA-256 the agent reports; a missing folder says so.
+test('the real agent exports a static site\'s publish directory from its image', { skip: !ON && 'set NOOBLY_REAL_DOCKER=1', timeout: 600_000 }, async () => {
+  const { unpack } = await import('../agent/tar.js');
+  const work = await fs.mkdtemp(path.join(os.tmpdir(), 'noobly-real-site-'));
+  const repo = path.join(work, 'repo');
+  const docker = createDocker({ stateDir: path.join(work, 'state') });
+  const tag = `noobly/${INSTALL}/site:0000000`;
+  const siteLabels = { ...labels, 'noobly-workload': 'site' };
+  try {
+    await fs.mkdir(repo);
+    await fs.writeFile(path.join(repo, 'package.json'), JSON.stringify({ name: 'site', version: '1.0.0', scripts: { build: 'node build.js' } }));
+    await fs.writeFile(path.join(repo, 'build.js'), [
+      "const fs = require('node:fs');",
+      "fs.mkdirSync('dist/assets', { recursive: true });",
+      "fs.writeFileSync('dist/index.html', '<h1>built</h1>');",
+      "fs.writeFileSync('dist/assets/app-Ab12cd34.js', 'x'.repeat(700000));",
+    ].join('\n'));
+    const git = (...args) => execFileSync('git', ['-C', repo, ...args]);
+    execFileSync('git', ['init', '--quiet', '--initial-branch', 'main', repo]);
+    git('add', '.');
+    git('-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '--quiet', '-m', 'site');
+    await docker.build(ok('image.build', { tag, labels: siteLabels, runtime: 'node22', source: { repo: `file://${repo}`, branch: 'main' }, stream: 'build-site' }), () => {});
+
+    const chunks = [];
+    const r = await docker.exportSite(ok('site.export', { tag, labels: siteLabels, dir: 'dist', maxBytes: 10 * 1024 * 1024, stream: 'x-real-1' }), (b) => chunks.push(b));
+    const tar = Buffer.concat(chunks);
+    assert.equal(tar.length, r.bytes);
+    assert.ok(chunks.length >= 2 && chunks.every((c) => c.length <= 512 * 1024), `chunked: ${chunks.map((c) => c.length)}`);
+    assert.equal(crypto.createHash('sha256').update(tar).digest('hex'), r.sha256);
+    const { files } = unpack(tar, { stripFirst: true });
+    assert.deepEqual(files.map((f) => [f.path, f.data.length]).sort(), [['assets/app-Ab12cd34.js', 700000], ['index.html', 14]]);
+    assert.equal(execFileSync('docker', ['ps', '-a', '--filter', 'name=noobly-export-', '--format', '{{.Names}}'], { encoding: 'utf8' }).trim(), '', 'the export container is removed');
+
+    await assert.rejects(docker.exportSite({ tag, labels: siteLabels, dir: 'build', maxBytes: 1e6 }, () => {}), /There is no build folder after the build/);
+    await assert.rejects(docker.exportSite({ tag, labels: siteLabels, dir: 'dist', maxBytes: 1000 }, () => {}), /over 0 MB/);
+  } finally {
+    await docker.removeImage(tag).catch(() => {});
+    await fs.rm(work, { recursive: true, force: true });
+  }
 });

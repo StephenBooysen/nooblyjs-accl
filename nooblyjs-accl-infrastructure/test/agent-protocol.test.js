@@ -72,7 +72,7 @@ test('frames: encode and decode round-trip; size, JSON, version, type and sender
 test('the command set is fixed and has no shell or exec', () => {
   assert.deepEqual(Object.keys(COMMANDS).sort(), [
     'container.list', 'container.remove', 'container.run', 'container.stop', 'facts.get', 'health.check', 'image.build',
-    'image.pull', 'image.push', 'image.remove', 'ingress.counters', 'ingress.sync', 'job.run', 'logs.follow', 'logs.stop', 'network.ensure', 'stats.watch',
+    'image.pull', 'image.push', 'image.remove', 'ingress.counters', 'ingress.sync', 'job.run', 'logs.follow', 'logs.stop', 'network.ensure', 'site.export', 'stats.watch',
   ]);
   for (const name of ['exec', 'shell', 'container.exec', 'run', 'docker']) assert.match(checkCommand(name, {})[0].message, /Unknown command/);
 });

@@ -16,6 +16,10 @@ export const OFFLINE_AFTER_MS = 45_000;
 export const HOST_PORTS = { min: 20000, max: 29999 };
 /** R11 (8.5 R3): log lines over 16 KB are cut and marked. */
 export const MAX_LOG_LINE = 16 * 1024;
+/** Spec 8.8: a site's files come back in chunks of up to 512 KB (base64 in a frame, under MAX_FRAME_BYTES). */
+export const CHUNK_BYTES = 512 * 1024;
+/** Spec 8.8: the most a site export may send. */
+export const MAX_EXPORT_BYTES = 512 * 1024 * 1024;
 export const CUT_MARK = ' …[cut]';
 
 export class ProtocolError extends Error {
@@ -64,6 +68,11 @@ export function isRootDir(v) {
   if (v === '' || v === undefined || v === null) return true;
   return typeof v === 'string' && v.length <= 200 && /^[A-Za-z0-9._/-]+$/.test(v) && !v.startsWith('/') && !v.startsWith('-')
     && !v.split('/').includes('..');
+}
+
+/** A static site's publish directory (spec 8.8 R1): a folder inside the image's working directory, or '.' for all of it. */
+export function isPublishDir(v) {
+  return v === '.' || (typeof v === 'string' && v.length >= 1 && isRootDir(v) && !v.endsWith('/'));
 }
 
 /** https://host/path (no credentials in the URL), or file:///abs/path. file:// is only run by an agent in --dev mode. */
@@ -217,6 +226,18 @@ export const COMMANDS = {
   'image.push': { tag: S.str(RULES.image, { max: 200 }), ref: S.str(RULES.ref, { max: 400 }), auth: registryAuth, stream: S.str(RULES.stream) },
   'image.pull': { ref: S.str(RULES.ref, { max: 400 }), tag: S.str(RULES.image, { max: 200 }), auth: { ...registryAuth, optional: true }, stream: S.str(RULES.stream) },
   'image.remove': { tag: S.str(RULES.image, { max: 200 }) },
+  /**
+   * Spec 8.8: a static site's built files. A container is created from the image (never started), `dir` (in the
+   * image's working directory) is copied out as a tar, sent in `chunk` frames on `stream`, and the container removed.
+   * Answers { bytes, sha256 } of the whole tar.
+   */
+  'site.export': {
+    tag: S.str(RULES.image, { max: 200 }),
+    labels: S.labels(),
+    dir: S.fn(isPublishDir, 'A folder inside the build, such as dist, or . for all of it.'),
+    maxBytes: S.int(1, MAX_EXPORT_BYTES),
+    stream: S.str(RULES.stream),
+  },
   /** Spec 8.4: the whole ingress config, as data the agent renders (ingress.js). Ingress pool VMs only. */
   'ingress.sync': {
     sites: S.list(S.obj({
@@ -285,6 +306,8 @@ export const FRAMES = {
   log: { from: 'agent', fields: { stream: S.str(RULES.stream), seq: S.int(0, Number.MAX_SAFE_INTEGER), lines: { kind: 'lines', optional: false } } },
   stats: { from: 'agent', fields: { stream: S.str(RULES.stream), seq: S.int(0, Number.MAX_SAFE_INTEGER) } },
   'stream-end': { from: 'agent', fields: { stream: S.str(RULES.stream) } },
+  /** Spec 8.8: part of a site export, in order (seq from 0); data is base64. */
+  chunk: { from: 'agent', fields: { stream: S.str(RULES.stream), seq: S.int(0, Number.MAX_SAFE_INTEGER), data: S.text(Math.ceil(CHUNK_BYTES / 3) * 4) } },
   bye: { from: 'controller', fields: { reason: S.text(300), retry: S.bool() } },
 };
 // 'facts' and 'stats' carry open objects (checked by the controller when stored); 'lines' is checked below.
