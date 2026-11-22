@@ -68,6 +68,10 @@ export function createLocalRuntime({ store, servers, hub, resolveSecrets = async
   const streams = new Map();
   /** instance name → its open log stream: a container Docker restarted is followed again (its follow ended). */
   const following = new Map();
+  /** A job run's stream → what it reserves while it runs ({ host, cpu, memoryMb, workload }), for placement. */
+  const runsGoing = new Map();
+  /** Job runs choose their server one at a time (see run()). */
+  let placingRuns = Promise.resolve();
 
   const read = async () => (await store.readYaml(FILE)) ?? { instances: [] };
   const change = (fn) => store.withLock(FILE, async () => {
@@ -216,7 +220,11 @@ export function createLocalRuntime({ store, servers, hub, resolveSecrets = async
       const state = await read();
       const r = placeInstances({
         hosts: online.map((s) => ({ id: s.id, name: s.hostname ?? s.id, allocatable: s.allocatable ?? { cpu: s.facts?.cpus ?? 0, memoryMb: s.facts?.memoryMb ?? 0 } })),
-        instances: state.instances.filter((i) => RESERVING.includes(i.status) && !except.includes(i.name)).map((i) => ({ host: i.server, cpu: i.cpu, memoryMb: i.memoryMb, workload: keyOf(i.labels) })),
+        // Job runs going now reserve their plan too (a job may run several at once, 8.2 R6).
+        instances: [
+          ...state.instances.filter((i) => RESERVING.includes(i.status) && !except.includes(i.name)).map((i) => ({ host: i.server, cpu: i.cpu, memoryMb: i.memoryMb, workload: keyOf(i.labels) })),
+          ...runsGoing.values(),
+        ],
         plan, count, workload: keyOf(labels), cpuFloor: site.cpuFloor ?? 1, canGrow: site.kind === 'region' && Boolean(grow) && grown < count + 2,
       });
       if (!r.missing) return r.hosts.map((id) => online.find((s) => s.id === id));
@@ -973,11 +981,17 @@ export function createLocalRuntime({ store, servers, hub, resolveSecrets = async
      * Runs a job's container to completion on the least busy server (8.2 R6): removed when it exits; resolves its exit
      * code, duration and peak memory whatever the code (the platform decides what a non-zero exit means).
      */
-    async run({ labels, image, command, region, plan = { cpu: 0.5, memoryMb: 512 }, run: runSpec, signal, log: log_ = async () => {} }) {
+    async run({ labels, image, command, env: runEnv = [], region, plan = { cpu: 0.5, memoryMb: 512 }, run: runSpec, signal, log: log_ = async () => {} }) {
       const site = await siteOf(region);
-      const [server] = await choose({ site, plan, count: 1, labels, log: log_, signal });
-      await ensureImage(server, image, log_);
       const stream = `j-${rand(12)}`;
+      // Chosen one run at a time and reserved at once, so runs starting together do not all pick the same room.
+      const picked = placingRuns.then(async () => {
+        const [chosen] = await choose({ site, plan, count: 1, labels, log: log_, signal });
+        runsGoing.set(stream, { host: chosen.id, cpu: plan.cpu, memoryMb: plan.memoryMb, workload: keyOf(labels) });
+        return chosen;
+      });
+      placingRuns = picked.catch(() => {});
+      const server = await picked;
       const name = `noobly-${tenantHash(labels).slice(0, 8)}-${labels['noobly-workload']}-run-${rand(6)}`;
       let chain = Promise.resolve();
       onStream(stream, (frame) => {
@@ -987,9 +1001,13 @@ export function createLocalRuntime({ store, servers, hub, resolveSecrets = async
         for (const l of frame.lines) chain = chain.then(() => log_(l.line)).catch(() => {});
       });
       try {
+        await ensureImage(server, image, log_);
+        // The run's own variables (a task's name and input) come after the workload's and win.
+        const own = new Set(runEnv.map((e) => e.key));
+        const env = [...(await envFor(labels['noobly-tenant'], runSpec)).filter((e) => !own.has(e.key)), ...runEnv];
         const r = await send(server.id, 'job.run', {
           name, image, labels: agentLabels(labels), cpu: plan.cpu, memoryMb: plan.memoryMb, stream,
-          env: await envFor(labels['noobly-tenant'], runSpec), ...(command ? { command: ['/bin/sh', '-c', command] } : {}),
+          env, ...(command ? { command: ['/bin/sh', '-c', command] } : {}),
         }, { timeoutMs: 24 * 3_600_000 });
         await chain;
         const seconds = Number.isFinite(r.durationMs) ? Math.round(r.durationMs / 100) / 10 : null;
@@ -997,6 +1015,7 @@ export function createLocalRuntime({ store, servers, hub, resolveSecrets = async
         return { runId: stream, server: server.id, exitCode: r.exitCode, durationMs: r.durationMs ?? null, peakMemoryMb: r.peakMemoryMb ?? null };
       } finally {
         streams.delete(stream);
+        runsGoing.delete(stream);
       }
     },
 

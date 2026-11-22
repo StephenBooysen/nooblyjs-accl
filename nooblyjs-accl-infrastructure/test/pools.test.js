@@ -198,6 +198,64 @@ test('8.2.5–8.2.6 jobs record exit code, duration and peak memory and never ov
   }
 });
 
+test('8.2 R6 a job with concurrency runs that many at once with their own variables, refuses one more, holds no deploy up, and reserves room for each', async () => {
+  const { app, t, platform, pools } = await start();
+  try {
+    await t.post(`${API}/pools`, { as: 'stevie', body: { name: 'web', account: 'stevie-prod', region: 'africa-south1', size: 'medium', min: 1, max: 1 } });
+    await app.hosted.idle();
+    const job = service('tasks', { kind: 'job', concurrency: 3, run: { command: 'node task.js', env: [{ key: 'LOG_LEVEL', value: 'info' }, { key: 'TASK', value: 'from-the-spec' }] } });
+    delete job.healthCheck;
+    await platform.workloads.create('acme', job, { actor });
+    await app.hosted.idle();
+    assert.equal((await platform.workloads.get('acme', 'tasks')).concurrency, 3);
+    await assert.rejects(platform.workloads.create('acme', service('web-c', { concurrency: 2 }), { actor }), (e) => e.code === 'invalid' && /Only a job/.test(e.details.fields.concurrency));
+    await assert.rejects(platform.workloads.runJob('acme', 'tasks', { actor, env: [{ key: 'bad key', value: 'x' }] }), (e) => e.code === 'invalid' && Boolean(e.details.fields.env));
+    await assert.rejects(platform.workloads.runJob('acme', 'tasks', { actor, trigger: 'cron' }), (e) => e.code === 'invalid');
+
+    const docker = dockerOf(pools, 'web-1');
+    const release = docker.holdJobs();
+    // Three asks at once: each takes a lane of its own; the fourth is refused.
+    const asks = await Promise.all([1, 2, 3].map((n) => platform.workloads.runJob('acme', 'tasks', { actor, trigger: 'api', env: [{ key: 'TASK', value: `send-${n}` }, { key: 'TASK_INPUT', value: JSON.stringify({ n }) }] })));
+    assert.equal(new Set(asks.map((a) => a.operation.id)).size, 3);
+    await assert.rejects(platform.workloads.runJob('acme', 'tasks', { actor }), (e) => e.status === 409 && /already running 3 of 3 runs at once/.test(e.message));
+    assert.ok(await until(() => docker.jobs.length === 3), 'all three started without waiting for each other');
+
+    // A deploy of the job, and of another workload of the tenant (perTenant is 2), go while the runs hold.
+    await platform.workloads.create('acme', service('api'), { actor });
+    await platform.workloads.deploy('acme', 'tasks', { actor });
+    assert.ok(await until(async () => (await platform.workloads.get('acme', 'api')).status === 'live'), 'another workload deploys while three runs go');
+    assert.ok(await until(async () => (await platform.deploys.list('acme', 'tasks')).deploys[0].result === 'live'), 'the job deploys while its runs go');
+    assert.equal(docker.peakJobs, 3);
+
+    // The capacity counts the runs: a fourth run's room is reserved while they go.
+    release();
+    await app.hosted.idle();
+    const { runs } = await platform.jobs.runs('acme', 'tasks');
+    assert.deepEqual(runs.map((r) => [r.status, r.trigger]), [['succeeded', 'api'], ['succeeded', 'api'], ['succeeded', 'api']]);
+    const envOf = (j) => Object.fromEntries(j.env.map((e) => [e.key, e.value]));
+    assert.deepEqual(docker.jobs.map((j) => envOf(j).TASK).sort(), ['send-1', 'send-2', 'send-3'], 'a run\'s variable wins over the spec\'s');
+    assert.ok(docker.jobs.every((j) => envOf(j).LOG_LEVEL === 'info' && JSON.parse(envOf(j).TASK_INPUT).n >= 1), 'the spec\'s others are kept');
+    assert.ok(docker.jobs.every((j) => j.env.filter((e) => e.key === 'TASK').length === 1), 'no key twice');
+
+    // Room: with a plan that fits twice on the host, the third run at once finds no room.
+    const free = (await t.get(`${API}/capacity`, { as: 'stevie' })).json.regions.find((r) => r.region === 'africa-south1').free;
+    const big = service('big', { kind: 'job', concurrency: 3, plan: { cpu: 0.25, memoryMb: Math.floor(free.memoryMb / 2 / 64) * 64 }, run: { command: 'node big.js' } });
+    delete big.healthCheck;
+    await platform.workloads.create('acme', big, { actor });
+    await app.hosted.idle();
+    const hold = docker.holdJobs();
+    for (let i = 0; i < 3; i += 1) await platform.workloads.runJob('acme', 'big', { actor });
+    assert.ok(await until(async () => (await platform.jobs.runs('acme', 'big')).runs.some((r) => r.status === 'failed')));
+    hold();
+    await app.hosted.idle();
+    const bigRuns = (await platform.jobs.runs('acme', 'big')).runs;
+    assert.deepEqual(bigRuns.map((r) => r.status).sort(), ['failed', 'succeeded', 'succeeded']);
+    assert.match(bigRuns.find((r) => r.status === 'failed').reason, /full|no room/i);
+  } finally {
+    await app.close();
+  }
+});
+
 test('8.2.7 draining a host moves its instances one at a time to another, then deletes it', async () => {
   const { app, t, platform, pools, runtime } = await start();
   try {

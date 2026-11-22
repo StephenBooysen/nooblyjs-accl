@@ -134,12 +134,12 @@ export function createMockRuntime({ store, stepMs = 1200, now = () => Date.now()
     },
 
     /** Runs a job's container to completion. */
-    async run({ labels, image, command, signal, log = async () => {} }) {
+    async run({ labels, image, command, env = [], signal, log = async () => {} }) {
       const runId = id('run');
       await log(`Running ${command ?? 'the start command'} in ${image}`);
       await step('workload.job.run', signal);
       await change((s) => {
-        s.runs.push({ id: runId, labels, image, command: command ?? null, exitCode: 0, endedAt: iso() });
+        s.runs.push({ id: runId, labels, image, command: command ?? null, env: env.map((e) => ({ ...e })), exitCode: 0, endedAt: iso() });
       });
       await log('Exited with code 0');
       return { runId, exitCode: 0, durationMs: stepMs, peakMemoryMb: null };

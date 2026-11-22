@@ -13,12 +13,16 @@ import { inProgress } from '../services/operations.js';
 import { createPlatformRepos } from './repos.js';
 import { createMockRuntime } from './runtime-mock.js';
 import { createLocalRuntime } from './runtime-local.js';
-import { checkSpec, specOf, same, CHANGEABLE, REDEPLOY, RESCALE } from './spec.js';
+import { checkSpec, specOf, same, isEnvKey, CHANGEABLE, REDEPLOY, RESCALE } from './spec.js';
 import { isTenantId, isWorkloadName, KINDS, STATUSES, HTTP_KINDS, internalHost } from './names.js';
 import { CloudError } from '../providers/errors.js';
 
 export const OPERATION_TYPES = ['workload.create', 'workload.deploy', 'workload.scale', 'workload.restart', 'workload.suspend', 'workload.resume', 'workload.sleep', 'workload.wake', 'workload.delete', 'workload.job.run'];
 export const TRIGGERS = ['push', 'manual', 'config'];
+/** What may start a job's run: a person, the launcher's schedule, or the launcher's API (a task queue, 8.2 R6). */
+export const RUN_TRIGGERS = ['manual', 'schedule', 'api'];
+/** A run's own variables (runJob's env): how many, and how much text in all. */
+const RUN_ENV = { count: 20, bytes: 65_536 };
 const TONE = { live: 'success', deploying: 'warning', failed: 'danger', suspended: 'neutral', deleting: 'neutral' };
 const HOUR = 3_600_000;
 const round2 = (n) => Math.round(n * 100) / 100;
@@ -415,9 +419,11 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
       label: 'Run the job',
       async run(ctx) {
         const w = await workloadOf(ctx);
+        if (!w?.current?.image) throw new CloudError('invalid', `${ctx.op.resource.name} has nothing to run.`);
         await emit('infrastructure.job.started', runFacts(ctx), ctx.op.requestedBy);
-        // One run at a time per job (8.2 R6): the operations engine runs one operation per workload at a time.
-        const result = await runtime.run({ labels: await labelsOf(ctx), image: w.current.image, command: ctx.input.command ?? w.run?.command ?? null, region: w.region, plan: w.plan, run: w.run, signal: ctx.signal, log: ctx.log });
+        // Each run holds a lane of its own (runJob picks it), so runs go side by side up to the job's concurrency and
+        // neither wait for a deploy nor hold one up: a run starts the image that is live when it starts.
+        const result = await runtime.run({ labels: await labelsOf(ctx), image: w.current.image, command: ctx.input.command ?? w.run?.command ?? null, env: ctx.input.env ?? [], region: w.region, plan: w.plan, run: w.run, signal: ctx.signal, log: ctx.log });
         const kept = { exitCode: result.exitCode, durationMs: result.durationMs ?? null, peakMemoryMb: result.peakMemoryMb ?? null };
         if (result.exitCode !== 0) {
           await ctx.save(kept);
@@ -462,6 +468,7 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
   function view(w) {
     if (!w) return null;
     const { body: _body, statusBeforeDelete: _sbd, ...rest } = w;
+    if (rest.kind === 'job') rest.concurrency ??= 1;
     return { ...rest, statusText: rest.status ? rest.status[0].toUpperCase() + rest.status.slice(1) : 'Unknown', tone: TONE[rest.status] ?? 'neutral' };
   }
 
@@ -504,6 +511,33 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
 
   function refuseWhile(w, statuses, message) {
     if (statuses.includes(w.status)) throw new HttpError(409, 'conflict', message);
+  }
+
+  /** A run's own variables: [{ key, value }] with plain text values, up to RUN_ENV. → a copy */
+  function checkRunEnv(env) {
+    const bad = (message) => unprocessable(message, { fields: { env: message } });
+    if (!Array.isArray(env) || env.length > RUN_ENV.count) throw bad(`A list of up to ${RUN_ENV.count} variables.`);
+    const seen = new Set();
+    let bytes = 0;
+    for (const e of env) {
+      if (!e || typeof e !== 'object' || !isEnvKey(e.key)) throw bad('A key of letters, digits and underscores.');
+      if (typeof e.value !== 'string') throw bad(`${e.key}: a value is text.`);
+      if (seen.has(e.key)) throw bad(`${e.key} is set twice.`);
+      seen.add(e.key);
+      bytes += Buffer.byteLength(e.key) + Buffer.byteLength(e.value);
+    }
+    if (bytes > RUN_ENV.bytes) throw bad(`Up to ${RUN_ENV.bytes / 1024} KB in all.`);
+    return env.map((e) => ({ key: e.key, value: e.value }));
+  }
+
+  /** Runs fn after any earlier call for the same key has finished (runJob's lane choice). */
+  const runLocks = new Map();
+  function runLock(key, fn) {
+    const next = (runLocks.get(key) ?? Promise.resolve()).then(fn, fn);
+    const settled = next.catch(() => {});
+    runLocks.set(key, settled);
+    settled.then(() => { if (runLocks.get(key) === settled) runLocks.delete(key); });
+    return next;
   }
 
   // ---------------------------------------------------------------- services.platform
@@ -676,23 +710,38 @@ export function createPlatform({ store, host, operations, config, catalog, log, 
     },
 
     /**
-     * Runs a job once (the launcher keeps any schedule). One run at a time: while one is queued or running, another is
-     * refused (409), so a schedule that fires again skips rather than piling up. A run asked for during a deploy waits
-     * for it and runs the new image. trigger: manual or schedule. → { workload, operation }
+     * Runs a job once (the launcher keeps any schedule or queue). Up to the job's `concurrency` runs go at once (1
+     * unless the spec says more); past that another is refused (409, "… is already running …"), so a schedule that
+     * fires again skips rather than piling up, and a launcher's queue holds the rest. Each run holds a lane of its own:
+     * it starts the image live when it starts, and a deploy neither waits for it nor makes it wait.
+     * trigger: manual, schedule or api. env: the run's own plain variables ([{ key, value }], after the workload's, so
+     * they win), such as a task's name and input. → { workload, operation }
      */
-    async runJob(tenantId, name, { command, actor, trigger = 'manual' } = {}) {
-      const w = await mustGet(tenantId, name);
+    async runJob(tenantId, name, { command, env = [], actor, trigger = 'manual' } = {}) {
       const by = actorOf(actor);
-      if (w.kind !== 'job') throw unprocessable(`${name} is a ${w.kind}, not a job.`, { fields: { name: 'Not a job.' } });
       if (command !== undefined && command !== null && (typeof command !== 'string' || command.length > 500)) throw unprocessable('command is up to 500 characters.', { fields: { command: 'Up to 500 characters.' } });
-      if (!['manual', 'schedule'].includes(trigger)) throw unprocessable('trigger is manual or schedule.', { fields: { trigger: 'manual or schedule.' } });
-      refuseWhile(w, ['deleting', 'suspended'], `${name} is ${w.status}.`);
-      if (!w.current?.image) throw new HttpError(409, 'conflict', `${name} has no image yet. Wait for its first deploy.`);
-      const running = (await operations.list({ resource: `workload:${tenantId}/${name}`, status: 'active' })).find((o) => o.type === 'workload.job.run');
-      if (running) throw new HttpError(409, 'conflict', `${name} is already running (since ${running.startedAt ?? running.createdAt}).`);
-      await audit(by, 'workload.job.run', tenantId, name, { trigger });
-      const operation = await operations.start('workload.job.run', { resource: resourceOf(tenantId, name), tenant: tenantId, input: { command: command ?? null, trigger }, person: by });
-      return { workload: view(w), operation };
+      if (!RUN_TRIGGERS.includes(trigger)) throw unprocessable(`trigger is one of ${RUN_TRIGGERS.join(', ')}.`, { fields: { trigger: RUN_TRIGGERS.join(', ') } });
+      const runEnv = checkRunEnv(env);
+      // One decision at a time per job, so two asks at once cannot both take the last free lane.
+      return runLock(`${tenantId}/${name}`, async () => {
+        const w = await mustGet(tenantId, name);
+        if (w.kind !== 'job') throw unprocessable(`${name} is a ${w.kind}, not a job.`, { fields: { name: 'Not a job.' } });
+        refuseWhile(w, ['deleting', 'suspended'], `${name} is ${w.status}.`);
+        if (!w.current?.image) throw new HttpError(409, 'conflict', `${name} has no image yet. Wait for its first deploy.`);
+        const limit = w.concurrency ?? 1;
+        const going = (await operations.list({ resource: `workload:${tenantId}/${name}`, status: 'active' })).filter((o) => o.type === 'workload.job.run');
+        if (going.length >= limit) {
+          const first = going.at(-1);
+          throw new HttpError(409, 'conflict', limit === 1
+            ? `${name} is already running (since ${first.startedAt ?? first.createdAt}).`
+            : `${name} is already running ${going.length} of ${limit} runs at once.`);
+        }
+        const held = new Set(going.map((o) => o.lane).filter(Boolean));
+        const lane = Array.from({ length: limit }, (_, i) => `run-${i + 1}`).find((l) => !held.has(l));
+        await audit(by, 'workload.job.run', tenantId, name, { trigger });
+        const operation = await operations.start('workload.job.run', { resource: resourceOf(tenantId, name), lane, tenant: tenantId, input: { command: command ?? null, trigger, ...(runEnv.length ? { env: runEnv } : {}) }, person: by });
+        return { workload: view(w), operation };
+      });
     },
   };
 

@@ -22,6 +22,7 @@ export function createMockDocker({ facts = {}, now = () => Date.now(), registry 
   const iso = () => new Date(now()).toISOString();
   let jobsRunning = 0;
   let peakJobs = 0;
+  const jobsRun = []; // each job.run's { name, env, command }, oldest first (tests read them)
   let jobGate = null;
   let buildsRunning = 0;
   let peakBuilds = 0;
@@ -217,6 +218,7 @@ export function createMockDocker({ facts = {}, now = () => Date.now(), registry 
     async job(args, onLine) {
       fail('job.run');
       if (!images.has(args.image)) throw new Error(`No image ${args.image} on this server.`);
+      jobsRun.push({ name: args.name, env: (args.env ?? []).map((e) => ({ ...e })), command: args.command ?? null });
       jobsRunning += 1;
       peakJobs = Math.max(peakJobs, jobsRunning);
       try {
@@ -302,6 +304,10 @@ export function createMockDocker({ facts = {}, now = () => Date.now(), registry 
     },
     get peakJobs() {
       return peakJobs;
+    },
+    /** The job runs so far, oldest first: { name, env, command }. */
+    get jobs() {
+      return jobsRun;
     },
     /** Builds wait until the returned function is called (a second call while held returns the same one). */
     holdBuilds() {

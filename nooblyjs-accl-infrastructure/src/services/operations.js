@@ -1,8 +1,11 @@
 // The operations engine (architecture.md §7): anything that takes longer than a request. An operation is a record
 // (operations/<id>.md, its body the log) with a list of steps; it is queued on the launcher's queue and worked in this
 // process, at most `perAccount` at a time per cloud account, `perTenant` per platform tenant (phase 8) and one at a
-// time per resource (a stop waits for the launch). Each step is idempotent: it checks the record's saved state and the cloud before acting, so running it
-// again after a crash never creates anything twice.
+// time per resource (a stop waits for the launch). An operation started in a `lane` (a job's run, spec 8.2 R6) is one at
+// a time per resource and lane instead: it neither waits for the resource's other operations nor holds them up, and it
+// does not count against perAccount or perTenant (it waits on a container; the caller bounds how many lanes it uses).
+// Each step is idempotent: it checks the record's saved state and the cloud before acting, so running it again after a
+// crash never creates anything twice.
 //
 // When the server stops, a running operation stays "running" on disk and recover() picks it up at the next start, at
 // the step it was on. Cancel stops a running operation at its next safe point and undoes the steps that define undo.
@@ -20,6 +23,11 @@ export const who = (person) => (person ? { id: person.id, name: person.name ?? p
 /** 'vm:web-01', or for a platform workload (phase 8) 'workload:<tenant>/<name>': names are unique per tenant. */
 export const resourceKey = (resource) => (resource ? `${resource.type}:${resource.tenant ? `${resource.tenant}/` : ''}${resource.name}` : null);
 export const inProgress = (op) => ACTIVE.has(op?.status);
+/** What an operation holds while it runs: its resource, or its resource's lane. */
+const lockOf = (op) => {
+  const key = resourceKey(op.resource);
+  return key && op.lane ? `${key}#${op.lane}` : key;
+};
 
 /**
  * @param {object} o
@@ -92,13 +100,14 @@ export function createOperations({ repos, host, log, queue, providers, secrets, 
   // ---------------------------------------------------------------- starting
 
   /** Queues an operation. Returns its view at once; the work happens in the background. */
-  async function start(type, { resource, account = null, tenant = null, input = {}, person = null }) {
+  async function start(type, { resource, lane = null, account = null, tenant = null, input = {}, person = null }) {
     const def = types.get(type);
     if (!def) throw new Error(`No operation type ${type}.`);
     const op = {
       id: newId('op'),
       type,
       resource,
+      ...(lane ? { lane } : {}),
       account,
       ...(tenant ? { tenant } : {}),
       input,
@@ -153,13 +162,14 @@ export function createOperations({ repos, host, log, queue, providers, secrets, 
         waiting.splice(waiting.indexOf(id), 1);
         continue;
       }
-      const key = resourceKey(op.resource);
-      const busy = [...running.values()];
-      if (key && busy.some((r) => r.key === key)) continue;
-      if (op.account && busy.filter((r) => r.account === op.account).length >= perAccount) continue;
-      if (op.tenant && busy.filter((r) => r.tenant === op.tenant).length >= perTenant) continue;
+      const key = lockOf(op);
+      const all = [...running.values()];
+      if (key && all.some((r) => r.key === key)) continue;
+      const busy = all.filter((r) => !r.laned);
+      if (!op.lane && op.account && busy.filter((r) => r.account === op.account).length >= perAccount) continue;
+      if (!op.lane && op.tenant && busy.filter((r) => r.tenant === op.tenant).length >= perTenant) continue;
       waiting.splice(waiting.indexOf(id), 1);
-      const entry = { key, account: op.account, tenant: op.tenant ?? null, controller: new AbortController(), reason: null };
+      const entry = { key, laned: Boolean(op.lane), account: op.account, tenant: op.tenant ?? null, controller: new AbortController(), reason: null };
       running.set(id, entry);
       entry.promise = execute(id, entry)
         .catch((err) => log.error(`operation ${id}: ${err.stack ?? err.message}`))
@@ -388,6 +398,7 @@ export function createOperations({ repos, host, log, queue, providers, secrets, 
       type: op.type,
       label: op.label,
       resource: op.resource,
+      ...(op.lane ? { lane: op.lane } : {}),
       account: op.account ?? null,
       tenant: op.tenant ?? null,
       status: op.status,
