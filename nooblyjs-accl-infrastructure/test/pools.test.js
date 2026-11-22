@@ -128,26 +128,38 @@ test('8.2 R4: a full region grows its pool by a host; past its max a deploy fail
   }
 });
 
-test('8.2.5–8.2.6 jobs record exit code, duration and peak memory and never overlap; crashes are events; suspend frees, resume re-places', async () => {
+test('8.2.5–8.2.6 jobs record exit code, duration and peak memory and never overlap (a second run is refused); crashes are events; suspend frees, resume re-places', async () => {
   const { app, t, platform, pools, runtime } = await start();
   const events = [];
   app.eventEmitter.on('infrastructure.instance.crashed', (e) => events.push(e));
   try {
     await t.post(`${API}/pools`, { as: 'stevie', body: { name: 'web', account: 'stevie-prod', region: 'africa-south1', size: 'medium', min: 1, max: 1 } });
     await app.hosted.idle();
-    // A job, run twice at once: the second waits for the first.
+    // A job asked to run while it runs: the second is refused, so a schedule that fires again skips.
     const job = service('nightly', { kind: 'job', run: { command: 'node task.js' } });
     delete job.healthCheck;
     await platform.workloads.create('acme', job, { actor });
     await app.hosted.idle();
     const docker = dockerOf(pools, 'web-1');
     const release = docker.holdJobs();
-    await platform.workloads.runJob('acme', 'nightly', { actor });
-    await platform.workloads.runJob('acme', 'nightly', { actor });
+    const jobEvents = [];
+    for (const type of ['infrastructure.job.started', 'infrastructure.job.succeeded']) app.eventEmitter.on(type, (e) => jobEvents.push({ type, ...e }));
+    await platform.workloads.runJob('acme', 'nightly', { actor, trigger: 'schedule' });
+    await assert.rejects(platform.workloads.runJob('acme', 'nightly', { actor }), (e) => e.status === 409 && /already running/.test(e.message));
     await new Promise((r) => setTimeout(r, 50));
     release();
     await app.hosted.idle();
     assert.equal(docker.peakJobs, 1, 'a job never runs twice at once');
+    assert.deepEqual(jobEvents.map((e) => [e.type, e.tenantId, e.workload, e.trigger]), [['infrastructure.job.started', 'acme', 'nightly', 'schedule'], ['infrastructure.job.succeeded', 'acme', 'nightly', 'schedule']]);
+    assert.deepEqual([jobEvents[1].exitCode, jobEvents[1].peakMemoryMb], [0, 32]);
+    const { runs } = await platform.jobs.runs('acme', 'nightly');
+    assert.equal(runs.length, 1);
+    assert.deepEqual([runs[0].status, runs[0].trigger, runs[0].exitCode, runs[0].peakMemoryMb, runs[0].reason], ['succeeded', 'schedule', 0, 32, null]);
+    assert.equal(runs[0].id, jobEvents[0].runId);
+    const one = await platform.jobs.get('acme', 'nightly', runs[0].id);
+    assert.ok(one.log.some((l) => /Exited with code 0/.test(l.text)), 'the run\'s log');
+    await assert.rejects(platform.jobs.get('acme', 'nightly', 'op_nope'), (e) => e.code === 'not_found');
+    await assert.rejects(platform.jobs.runs('globex', 'nightly'), (e) => e.code === 'not_found', 'another tenant');
     const { lastRun } = await platform.workloads.get('acme', 'nightly');
     assert.deepEqual([lastRun.result, lastRun.exitCode, lastRun.peakMemoryMb], ['succeeded', 0, 32]);
     assert.equal(typeof lastRun.durationMs, 'number');

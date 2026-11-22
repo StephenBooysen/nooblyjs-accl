@@ -12,7 +12,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { createDocker } from '../agent/docker.js';
+import { createDocker, errorLine } from '../agent/docker.js';
 import { checkCommand } from '../agent/protocol.js';
 
 const ON = process.env.NOOBLY_REAL_DOCKER === '1';
@@ -105,4 +105,12 @@ test('the real agent builds, runs, checks, follows and removes a Node app on thi
     try { execFileSync('docker', ['rmi', '--force', tag], { stdio: 'ignore' }); } catch { /* never built */ }
     await fs.rm(work, { recursive: true, force: true });
   }
+});
+
+test('a failed docker command reports its cause, not the usage text after it', () => {
+  const flag = 'docker: invalid argument "127.0.0.1:x:3000" for "-p, --publish" flag: invalid hostPort: x\n\nUsage:  docker run [OPTIONS] IMAGE [COMMAND] [ARG...]\n\nRun \'docker run --help\' for more information\n';
+  assert.equal(errorLine(flag), 'invalid argument "127.0.0.1:x:3000" for "-p, --publish" flag: invalid hostPort: x');
+  assert.equal(errorLine('docker: Error response from daemon: Conflict. The container name "/a" is already in use.\nSee \'docker run --help\'.\n'), 'Error response from daemon: Conflict. The container name "/a" is already in use.');
+  assert.equal(errorLine('fatal: repository not found\n'), 'fatal: repository not found');
+  assert.equal(errorLine(''), '');
 });

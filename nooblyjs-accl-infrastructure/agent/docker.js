@@ -109,9 +109,19 @@ export function exec(cmd, args, { cwd, env, input, onLine, keep = true, signal }
   });
 }
 
+/**
+ * The line of a failed command's stderr that says what went wrong: the last one that is not the CLI's usage text
+ * ("Usage: …", "See 'docker run --help'.", "Run 'docker run --help' for more information"), which follows the cause.
+ */
+export function errorLine(stderr) {
+  const lines = String(stderr ?? '').split('\n').map((l) => l.trim()).filter(Boolean);
+  const useful = lines.filter((l) => !/^usage:/i.test(l) && !/--help'?\.?( for more information)?$/.test(l));
+  return (useful.at(-1) ?? lines.at(-1) ?? '').replace(/^docker: /, '');
+}
+
 async function must(cmd, args, o) {
   const r = await exec(cmd, args, o);
-  if (r.code !== 0) throw new Error((r.stderr.trim().split('\n').at(-1) || `${cmd} ${args[0]} failed`).slice(0, 500));
+  if (r.code !== 0) throw new Error((errorLine(r.stderr) || `${cmd} ${args[0]} failed`).slice(0, 500));
   return r;
 }
 
@@ -383,11 +393,15 @@ export function createDocker({ stateDir, docker = 'docker', git = 'git', caddyAd
       };
       const timer = setInterval(() => { sample(); }, 2000);
       timer.unref?.();
+      // A first sample soon after the start, so a short job has a peak too.
+      const first = setTimeout(() => { sample(); }, 500);
+      first.unref?.();
       try {
         const r = await exec(docker, runArgs(a, { envFile, detach: false }), { onLine, keep: false });
         return { exitCode: r.code, durationMs: Date.now() - started, peakMemoryMb: Math.round(peak) || null };
       } finally {
         clearInterval(timer);
+        clearTimeout(first);
         if (envFile) await fs.rm(envFile, { force: true });
       }
     },

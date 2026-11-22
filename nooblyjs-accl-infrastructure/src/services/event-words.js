@@ -104,6 +104,18 @@ const WORDS = {
   // The platform layer (spec 8.1): a launcher's tenants' workloads. `tenantId` names whose.
   'infrastructure.workload.created': { verb: 'Created', tone: 'info', text: (p) => `${p.kind} ${p.workload} for ${p.tenantId}` },
   'infrastructure.workload.updated': { verb: 'Changed', tone: 'neutral', text: (p) => `${p.workload} for ${p.tenantId}${p.changed?.length ? ` (${p.changed.join(', ')})` : ''}` },
+  'infrastructure.job.started': { verb: 'Running', tone: 'info', text: (p) => `${p.workload} for ${p.tenantId} (${p.trigger})` },
+  'infrastructure.job.succeeded': { verb: 'Ran', tone: 'success', text: (p) => `${p.workload} for ${p.tenantId}: exit code ${p.exitCode}` },
+  'infrastructure.job.failed': {
+    verb: 'Failed', tone: 'danger',
+    text: (p) => `run of ${p.workload} for ${p.tenantId}`,
+    summary: (p) => `the run of ${p.workload} for ${p.tenantId} failed: ${p.reason}`,
+  },
+  'infrastructure.workload.scale_failed': {
+    verb: 'Failed', tone: 'danger',
+    text: (p) => `scale of ${p.workload} for ${p.tenantId}`,
+    summary: (p) => `could not scale ${p.workload} for ${p.tenantId}: ${p.reason}${p.reverted ? ` (back to ${p.instances})` : ''}`,
+  },
   'infrastructure.workload.instances': {
     verb: 'Instances', tone: 'warning',
     text: (p) => ({
