@@ -2,7 +2,7 @@
 # Installs the Noobly Cloud agent on an Ubuntu server and enrols it in a site (spec 8.9 R2, task 8.9.10).
 # The controller serves this file with its own URL filled in; Add server shows the line that runs it:
 #
-#   curl -fsSL <controller>/agent/install.sh | sudo bash -s -- --token enr_… [--install-docker] [--install-node]
+#   curl -fsSL <controller>/agent/install.sh | sudo bash -s -- --token enr_… [--install-docker] [--install-node] [--no-firewall]
 #
 # What it does, and nothing else:
 #   - checks Ubuntu 22.04 or 24.04, Node.js 22 or newer, Docker Engine and git; installs Docker (docker.io), Node.js 22
@@ -11,7 +11,11 @@
 #   - downloads the agent's files from the controller into /opt/noobly-agent;
 #   - writes the one-time token to /etc/noobly-agent/token (0600, owned by noobly); the agent deletes it once enrolled
 #     and keeps its own credential in /var/lib/noobly-agent/agent.json (0600);
-#   - with systemd: installs and starts noobly-agent.service; without it (containers, Codespaces): prints the command.
+#   - applies the egress firewall (spec 8.9 R14): tenant containers and builds reach the internet, but not this server
+#     or its private network (except the database relays on their gateway); --no-firewall skips it, and the server then
+#     shows a warning to operators;
+#   - with systemd: installs and starts noobly-agent.service, and noobly-firewall.service, which applies the firewall
+#     again at boot and whenever Docker restarts; without it (containers, Codespaces): prints the commands.
 set -euo pipefail
 
 CONTROLLER="__CONTROLLER__"
@@ -19,10 +23,11 @@ TOKEN=""
 INSTALL_DOCKER=0
 INSTALL_NODE=0
 DEV=0
+FIREWALL=1
 PREFIX=/opt/noobly-agent
 STATE=/var/lib/noobly-agent
 CONF=/etc/noobly-agent
-FILES="package.json protocol.js core.js connect.js docker.js ingress.js relay.js bin/noobly-agent.js runtimes/bases.json runtimes/node22.Dockerfile runtimes/python312.Dockerfile runtimes/go123.Dockerfile"
+FILES="package.json protocol.js core.js connect.js docker.js ingress.js relay.js firewall.js bin/noobly-agent.js runtimes/bases.json runtimes/node22.Dockerfile runtimes/python312.Dockerfile runtimes/go123.Dockerfile"
 
 say() { printf 'noobly-agent install: %s\n' "$*"; }
 fail() { printf 'noobly-agent install: %s\n' "$*" >&2; exit 1; }
@@ -34,6 +39,7 @@ while [ $# -gt 0 ]; do
     --install-docker) INSTALL_DOCKER=1; shift ;;
     --install-node) INSTALL_NODE=1; shift ;;
     --dev) DEV=1; shift ;;
+    --no-firewall) FIREWALL=0; shift ;;
     *) fail "unknown option $1" ;;
   esac
 done
@@ -114,6 +120,16 @@ fi
 
 DEV_FLAG=""
 [ "$DEV" -eq 1 ] && DEV_FLAG=" --dev"
+FIREWALL_RUN="$NODE $PREFIX/bin/noobly-agent.js firewall apply --state-dir $STATE"
+
+# The egress firewall (R14), before the first container can run.
+if [ "$FIREWALL" -eq 1 ]; then
+  command -v iptables >/dev/null || { say "installing iptables"; apt_install iptables; }
+  say "applying the egress firewall"
+  $FIREWALL_RUN || fail "could not apply the egress firewall (see above). Fix it, or run again with --no-firewall to go on without it."
+else
+  say "no egress firewall (--no-firewall): tenant containers can reach this server and its private network."
+fi
 RUN="$NODE $PREFIX/bin/noobly-agent.js run --controller $CONTROLLER --token-file $CONF/token --state-dir $STATE$DEV_FLAG"
 
 if [ -d /run/systemd/system ]; then
@@ -140,11 +156,30 @@ ReadWritePaths=$STATE $CONF
 [Install]
 WantedBy=multi-user.target
 UNIT
+  if [ "$FIREWALL" -eq 1 ]; then
+    say "installing noobly-firewall.service"
+    cat > /etc/systemd/system/noobly-firewall.service <<UNIT
+[Unit]
+Description=Noobly Cloud egress firewall for tenant containers (spec 8.9 R14)
+After=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=$FIREWALL_RUN
+
+[Install]
+WantedBy=docker.service multi-user.target
+UNIT
+  fi
   systemctl daemon-reload
+  [ "$FIREWALL" -eq 1 ] && systemctl enable --now noobly-firewall.service
   systemctl enable --now noobly-agent.service
   say "started. Follow it with: journalctl -u noobly-agent -f"
 else
   say "this machine has no systemd (a container?). Start the agent yourself, and keep it running:"
   printf '\n  sudo -u noobly -g docker %s\n\n' "$RUN"
+  [ "$FIREWALL" -eq 1 ] && say "the firewall is applied now; apply it again after a reboot or a Docker restart with: sudo $FIREWALL_RUN"
 fi
 say "done. The server appears on the Platform page under its site once the agent connects."

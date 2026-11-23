@@ -1,5 +1,6 @@
 // Relays (spec 8.6 R2, where the platform runs Postgres on a local site): a tenant's containers reach a database server
-// on this machine (or the site's network) through a TCP relay the agent opens on the tenant network's gateway address.
+// on this machine (or the site's network) through a TCP relay the agent opens on the tenant network's gateway address
+// (from RELAY_PORT up).
 // Docker answers that address from every bridge network, so each connection's source must be inside that network's
 // subnet: another tenant's container is refused before a byte is forwarded. The relay then reads the Postgres startup
 // message and forwards it only when its database is one of the tenant's and its user is that database's own login role
@@ -30,6 +31,14 @@ export function inSubnet(cidr) {
     return n !== null && ((n & mask) >>> 0) === ((b & mask) >>> 0);
   };
 }
+
+/**
+ * Where relays listen on a tenant network's gateway: a range of their own, not the database's port, so a database
+ * server that also listens on the gateway (bound to 0.0.0.0) is never what a tenant's container reaches there. The
+ * egress firewall (firewall.js) opens only this range, only on the gateway.
+ */
+export const RELAY_PORT = 15432;
+export const RELAY_PORT_SPAN = 20;
 
 const SSL_REQUEST = 80877103;
 const GSS_REQUEST = 80877104;
@@ -151,7 +160,7 @@ export function createRelays({ stateDir, targets = [], inspect, log = {} }) {
      * Opens (or keeps) the relay for `network` to `target` ("host:port"), for these databases (each reached only as its
      * own login role, named after it). A relay that is open takes the new list at once. → { host, port, subnet }
      */
-    async ensure({ network, target, port = 5432, databases = [] }) {
+    async ensure({ network, target, port = RELAY_PORT, databases = [] }) {
       if (!allowed.has(target)) throw Object.assign(new Error(`This agent does not relay to ${target}. Start it with --relay-target ${target}.`), { code: 'refused' });
       const have = open.get(network);
       if (have && have.target === target) {
@@ -163,13 +172,14 @@ export function createRelays({ stateDir, targets = [], inspect, log = {} }) {
       const addr = await inspect(network);
       if (!addr?.gateway || !addr?.subnet) throw new Error(`There is no network ${network} here.`);
       let state;
-      // The port on the gateway: the target's own port when free there, else the next ones.
+      // The port on the gateway: RELAY_PORT when free there, else the next ones (up to RELAY_PORT_SPAN more), the
+      // range the egress firewall lets tenant containers reach on their gateway (firewall.js).
       for (let p = port, tries = 0; ; p += 1, tries += 1) {
         try {
           state = await listen(network, addr, target, p, databases);
           break;
         } catch (err) {
-          if (err.code !== 'EADDRINUSE' || tries >= 20) throw err;
+          if (err.code !== 'EADDRINUSE' || tries >= RELAY_PORT_SPAN) throw err;
         }
       }
       open.set(network, state);

@@ -3,6 +3,7 @@
 //
 //   noobly-agent run --controller <url> [--token <enr_…> | --token-file <file>] [--state-dir <dir>] [--dev]
 //   noobly-agent status [--state-dir <dir>]
+//   noobly-agent firewall apply|remove|status [--state-dir <dir>]   (apply and remove as root; spec 8.9 R14)
 //
 // The first run trades the one-time token for this server's credential and keeps it in <state-dir>/agent.json (0600);
 // later runs say hello with it. --dev allows file:// sources (a development machine). Stops when the controller
@@ -13,6 +14,7 @@ import { parseArgs } from 'node:util';
 import { connectForever } from '../connect.js';
 import { createDocker, serverFacts } from '../docker.js';
 import { AGENT_VERSION } from '../protocol.js';
+import { applyFirewall, removeFirewall, firewallStatus, firewallRules } from '../firewall.js';
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -47,6 +49,35 @@ if (command === 'status') {
   console.log(JSON.stringify({ agentVersion: AGENT_VERSION, stateDir, enrolled: Boolean(s.server && s.credential), server: s.server ?? null, controller: s.controller ?? null }, null, 2));
   process.exit(0);
 }
+// The egress firewall (spec 8.9 R14): install.sh and the noobly-firewall unit run this as root.
+if (command === 'firewall') {
+  const action = positionals[1] ?? 'status';
+  if (action === 'status') {
+    console.log(JSON.stringify({ ...(await firewallStatus(stateDir)), rules: firewallRules() }, null, 2));
+    process.exit(0);
+  }
+  if (!['apply', 'remove'].includes(action)) {
+    console.error('Usage: noobly-agent firewall apply|remove|status [--state-dir <dir>]');
+    process.exit(2);
+  }
+  if (process.getuid?.() !== 0) {
+    console.error(`noobly-agent: firewall ${action} changes iptables: run it as root (sudo).`);
+    process.exit(2);
+  }
+  try {
+    if (action === 'apply') {
+      const s = await applyFirewall({ stateDir });
+      log.info(`egress firewall applied (database relays on the gateway, ports ${s.relayPorts})`);
+    } else {
+      await removeFirewall({ stateDir });
+      log.info('egress firewall removed');
+    }
+    process.exit(0);
+  } catch (err) {
+    console.error(`noobly-agent: ${err.message}`);
+    process.exit(1);
+  }
+}
 if (command !== 'run') {
   console.error('Usage: noobly-agent run --controller <url> [--token <token> | --token-file <file>] [--state-dir <dir>] [--dev]');
   process.exit(2);
@@ -71,7 +102,7 @@ const agent = connectForever({
   controller,
   dev: values.dev,
   docker,
-  facts: () => serverFacts(),
+  facts: () => serverFacts({ stateDir }),
   log,
   identity: () => (state.server && state.credential ? { server: state.server, credential: state.credential } : { token }),
   onWelcome: async (w) => {

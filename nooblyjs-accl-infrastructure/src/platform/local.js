@@ -165,6 +165,7 @@ export function createLocalServers({ store, config, now, log }) {
       const warnings = [];
       if (facts.security && !facts.security.userns && !facts.security.rootless) warnings.push('Docker runs without user namespaces: a container escape would be root on this server.');
       if (facts.cgroup && facts.cgroup !== 2) warnings.push('cgroup v1: CPU and memory limits are less reliable.');
+      if (facts.egressFirewall && facts.egressFirewall.applied !== true) warnings.push('No egress firewall: tenant containers and builds can reach this server and its private network. Run sudo noobly-agent firewall apply (spec 8.9 R14).');
       const allocatable = {
         cpu: Math.max(0, Math.round(((facts.cpus ?? 0) - site.reserve.cpu) * 100) / 100),
         memoryMb: Math.max(0, (facts.memoryMb ?? 0) - site.reserve.memoryMb),

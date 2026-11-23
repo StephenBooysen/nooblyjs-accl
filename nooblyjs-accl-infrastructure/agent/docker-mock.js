@@ -97,6 +97,7 @@ export function createMockDocker({ facts = {}, now = () => Date.now(), registry 
     facts: async () => ({
       hostname: 'mock-server', os: 'Ubuntu 24.04.5 LTS', kernel: '6.8.0', cpus: 4, memoryMb: 8192, diskFreeGb: 40,
       docker: '29.0.0-mock', cgroup: 2, security: { userns: false, rootless: false, apparmor: true, seccomp: true },
+      egressFirewall: { applied: true, version: 1, at: '2026-11-23T00:00:00.000Z' },
       addresses: ['192.168.1.20'], ...facts,
     }),
 
@@ -158,7 +159,7 @@ export function createMockDocker({ facts = {}, now = () => Date.now(), registry 
     },
     /** What the next static site exports find: fn(args) → [{ path, data }], or null for "no such folder". */
     /** Relays (spec 8.6 R2): a made-up gateway per network, from the targets it was given (all, when none were). */
-    async relayEnsure({ network, target, port = 5432, databases = [] }) {
+    async relayEnsure({ network, target, port = 15432, databases = [] }) {
       fail('relay.ensure');
       if (relayTargets && !relayTargets.includes(target)) throw Object.assign(new Error(`This agent does not relay to ${target}. Start it with --relay-target ${target}.`), { code: 'refused' });
       if (!networks.has(network)) throw new Error(`There is no network ${network} here.`);
