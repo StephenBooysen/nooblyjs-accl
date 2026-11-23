@@ -69,9 +69,12 @@ match the rating tables, and the ledger balances.
 - [x] 3.2 Dunning: retry schedule, final action, delinquent accounts; emails via the customers accelerator when mounted.
 - [x] 3.3 Refunds (full/partial) and credit notes with ledger postings; support refund limit.
 - [x] 3.4 Webhooks: raw-body route before auth, verification, de-duplication, processing through the queue.
-- [ ] 3.5 **Stripe adapter** (Customers, SetupIntents + Payment Element, off-session PaymentIntents, Refunds, webhooks, balance transactions); contract suite against a Stripe sandbox.
-  *2026-11-23:* the adapter is built and checked against a stand-in Stripe API (`test/providers/contract.test.js`);
-  the sandbox run (`RUN_STRIPE_TESTS=1`) waits for test keys, and with it this box and the Phase 3 exit check.
+- [x] 3.5 **Stripe adapter** (Customers, SetupIntents + Payment Element, off-session PaymentIntents, Refunds, webhooks, balance transactions); contract suite against a Stripe sandbox.
+  *2026-11-23:* the adapter is built and checked against a stand-in Stripe API (`test/providers/contract.test.js`).
+  The sandbox run passed the same day with a restricted test key (`RUN_STRIPE_TESTS=1 STRIPE_SECRET_KEY=rk_test_…`):
+  a customer, a card saved through a SetupIntent (`pm_card_visa`), an off-session charge, a partial refund, balance
+  transactions and detaching the card, all on Stripe. Webhooks from Stripe and the Payment Element in a browser are
+  not in it: they need `STRIPE_WEBHOOK_SECRET` (Dashboard → Webhooks, or `stripe listen`), as does the exit check below.
 - [x] 3.6 Invoice PDF (choose the writer); hosted invoice page with signed link.
 - [x] 3.7 Operator UI: Payments, Refunds, Dunning queue.
 
