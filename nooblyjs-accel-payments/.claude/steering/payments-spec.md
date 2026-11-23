@@ -161,13 +161,16 @@ Lists use the customers conventions (`filter[...]`, `sort`, `limit`, `offset`, `
 | `subscriptions`, `subscriptions/{id}:change`, `:cancel`, `:pause`, `:resume`, `subscriptions/{id}/preview` | Preview returns the next invoice |
 | `usage` (POST, batch up to 1,000), `accounts/{id}/usage?period=` | Idempotent by key |
 | `invoices`, `invoices/{id}:finalize`, `:pay`, `:void`, `:mark-uncollectible`, `:send`, `invoices/{id}.pdf` | |
-| `credit-notes`, `refunds`, `payments` | Refunds and credit notes need `Idempotency-Key` |
+| `credit-notes`, `refunds`, `payments` | Refunds and credit notes need `Idempotency-Key`; a refund takes `reasonCode` (`requested_by_customer`, `duplicate`, `fraudulent`, `other`) and `notifyCustomer`; `payments/{id}` carries its card and refunds |
+| `provider`, `webhooks` | The connection (name, test or live, account id, webhook URL and events) and the events received |
 | `reports/revenue`, `reports/mrr`, `reports/aging`, `exports/{kind}.csv` | `reporting` module |
 | `reconciliation/issues` | |
 
 Public (no session) at `{basePath}/payments/p`: `POST /webhooks/{provider}` (raw body, signature verified, mounted
-before JSON parsing and auth), `GET /invoices/{token}` (signed hosted invoice page), `GET /actions/{token}`
-(3-D Secure / authorisation hand-off).
+before JSON parsing and auth), `GET /invoices/{token}` (the hosted checkout of a signed link; a paid invoice shows its
+receipt; `?return=` a path or URL on the host's own site), `POST /invoices/{token}/setup` and `/pay` (a card through the
+provider's fields pays the invoice, saved as the default unless `save: false`), `GET /invoices/{token}/pdf`,
+`GET /actions/{token}` (3-D Secure / authorisation hand-off).
 
 In-process API (`pay.billing`, `pay.payments`): `ensureAccount({ externalRef, … })`, `subscribe`, `changePlan`,
 `cancel`, `recordUsage`, `previewInvoice`, `listInvoices`, `setupMethod`, `confirmMethod`, `refund`, `creditNote`.
@@ -184,10 +187,26 @@ payment failed, card expiring) through its consent and suppression pipeline.
 
 ## 9. UI
 
-- **Operator UI** at `{basePath}/payments/`: Overview (MRR, revenue this month, open and overdue, failed payments),
-  Accounts (list, account page: methods, subscription, invoices, payments, credit, ledger), Invoices, Payments,
-  Refunds, Plans (products, prices, meters), Dunning queue, Reconciliation. Bootstrap 5.3 + the NooblyJS theme; status
-  pills follow the theme's tokens (paid teal, open warning, overdue/failed danger, void neutral).
+- **Operator UI** (*NooblyJS Pay*, after the mock-ups in `ui/`) at `{basePath}/payments/`, in three groups:
+  - *Payments*: **Orders & payments** (an invoice is the order: list with search and filters; the order page with
+    Order total, Collected, Refunded and Net received, its payments filtered by state, the selected payment's details
+    with its timeline and the metadata sent to the provider, Copy payment link, Take a payment, the invoice lines,
+    credit notes); **Take a payment** (a one-off invoice charged to the card on file or emailed as a payment link);
+    **Refund a payment** (everything that's left or a partial amount, the provider's reason, a team note, a refund
+    receipt email, the summary of what you keep, earlier refunds); **Refunds**; **Recurring** (subscriptions as
+    schedules: active, paused and past due counts, pause, resume, cancel at period end, retry; *New schedule* makes a
+    product, a flat monthly or yearly price and a subscription); **Checkout page** (open payment links).
+  - *Books*: Overview (MRR, revenue this month, open and overdue, failed payments, ledger), Accounts (account page:
+    cards, subscriptions, orders, payments, ledger), Plans (products, prices, meters), Reconciliation. Dunning lives
+    under Recurring.
+  - *Setup*: **Stripe connection** (mode, account, keys present; on the mock provider, how to connect) and
+    **Webhooks** (the endpoint, the events to send, the events received).
+  Bootstrap 5.3 + the NooblyJS theme; status pills follow the theme's tokens (paid teal, open warning, overdue/failed
+  danger, void neutral) and always carry a word.
+- **Hosted checkout** at `{basePath}/payments/p/invoices/{token}`: the order (lines, tax, total due, the parties and
+  VAT numbers, the PDF) beside the card form (the provider's hosted fields), *Save this card*, *Pay $X*; afterwards the
+  receipt (*Payment received*: card, date, receipt email, reference) and, with `?return=`, a 5-second return to the
+  host with `payment=succeeded&invoice=…`.
 - **Embeddable components** (`pay.components`, served at `{basePath}/payments/components/*.js`, no framework):
   `CardForm` (mounts the provider's hosted fields or opens Paystack's popup; never sees the card number) and
   `BillingSummary` (plan, next invoice estimate, methods, invoices). The host passes an API base and a fetch wrapper
@@ -213,3 +232,29 @@ payment failed, card expiring) through its consent and suppression pipeline.
   sandboxes when keys are set.
 - Seed story: NooblyJS Cloud plans (Free, Starter, Standard, Pro, Pro Plus; prices `[PRICE]` until decided), meters
   (`cpu_hours`, `memory_gb_hours`, `bandwidth_gb`), account *Exclusivity Life* with a card and three months of invoices.
+
+## 12. Decisions (Phases 0–3, 2026-11-23)
+
+- **O1**: the shared building blocks (repositories on core `dataService`, idempotency, audit, events) are small and
+  copied into `src/shared/`, not imported from the customers accelerator: no coupling between the two packages' releases.
+- **Billed by the hour, priced by the month**: a metered price may say `divideBy: 'month_hours'`; each recorded hour
+  costs the monthly `unitAmount` divided by the hours in that month, so a month of hours is exactly the monthly price.
+- **Action routes** use a colon on the resource (`invoices/{id}:pay`, `subscriptions/{id}:pause`), as Google's API
+  style; Express sees one `:ref` parameter and splits it.
+- **Subscriptions may start in the past** (`startAt`, never the future); `closeDue` closes every missed period in order.
+  Proration uses the whole cycle, not the (possibly partial) current period.
+- **PDF**: a dependency-free writer (text on A4 with the standard Helvetica fonts, no images) in `billing/document.js`.
+- **Email addresses** are checked loosely (a dot in the domain is not required), so a host's `admin@localhost` works.
+- **Mock card fields**: a same-origin page in a frame, talking to `CardForm` by `postMessage`; the card number never
+  reaches the host page, as with a real provider, and no CSP change is needed.
+- **Hosted checkout** (mock-ups *Hosted checkout*, *Payment success*): one signed link per invoice is both the payment
+  link and the receipt. A customer's own attempt on the checkout is not a dunning attempt; a new default card retries
+  what is overdue, and the checkout reads that retry rather than charging twice. `?return=` is accepted only on the
+  host's origin (no open redirect). The page shows the parties and VAT numbers (O4) on the receipt as on the PDF.
+- **Payment links**: `createInvoice({ …, collect: false })` finalises without charging and emails *Pay invoice …*
+  (`pay-payment-link`) instead of *invoice ready*.
+- **Refunds** keep the free-text reason and a provider `reasonCode` (Stripe's `reason`); `notifyCustomer: true`
+  emails `pay-refund-receipt`.
+- **Not in the mock-ups' scope yet**: Apple Pay and Google Pay buttons, a schedule that ends after N payments, weekly
+  and quarterly schedules (prices are monthly or yearly), and Stripe Radar risk scores on the payment details.
+

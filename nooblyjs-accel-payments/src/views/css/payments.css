@@ -1,0 +1,213 @@
+/*
+ * NooblyJS Pay: the payments accelerator's operator UI, after the mock-ups in .claude/steering/ui
+ * (Order payments, Refund a payment, Recurring payments).
+ *
+ * Load order: Bootstrap 5.3 → Bootstrap Icons → styles.css (verbatim copy of nooblyjs/styling/styles.css: the theme,
+ * never edit it here) → this file. Colours come from the theme tokens only. Classes are prefixed `pay-`.
+ * No inline styles anywhere (core's CSP has no unsafe-inline).
+ */
+
+/* ---- Bootstrap ↔ theme ----------------------------------------------------------------------------------------- */
+:root {
+    --bs-body-font-family: var(--font-body);
+    --bs-body-bg: var(--bg);
+    --bs-body-color: var(--ink);
+    --bs-border-color: var(--border);
+    --bs-primary: var(--accent);
+    --bs-link-color: var(--accent-link);
+    --bs-link-color-rgb: 166, 63, 28;
+    --bs-link-hover-color: var(--accent);
+    --bs-secondary-color: var(--muted);
+    --bs-tertiary-bg: var(--surface-sunken);
+    --pay-sidebar-width: 248px;
+}
+
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); }
+.table > :not(caption) > * > * { background-color: transparent; }
+.form-control, .form-select { border-color: var(--border-strong); border-radius: 12px; padding: 10px 14px; font-size: 15.5px; color: var(--ink); }
+.form-control:focus, .form-select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.form-control.is-invalid, .form-select.is-invalid { border-color: var(--danger); }
+.form-label { font-weight: 600; font-size: 15px; margin-bottom: 8px; }
+.form-text { color: var(--muted); font-size: 13.5px; }
+.invalid-feedback { color: var(--danger-ink); }
+.input-group-text { background: var(--surface-sunken); border-color: var(--border-strong); border-radius: 12px; color: var(--ink-2); font-weight: 600; }
+.form-check-input:checked { background-color: var(--accent); border-color: var(--accent); }
+.form-check-input:focus { box-shadow: 0 0 0 3px var(--accent-soft); border-color: var(--accent); }
+a { color: var(--accent-link); }
+
+.pay-skip { position: absolute; left: -9999px; top: 8px; z-index: 2000; background: var(--ink); color: var(--on-ink); padding: 8px 14px; border-radius: 10px; }
+.pay-skip:focus { left: 8px; }
+
+/* ---- Buttons ----------------------------------------------------------------------------------------------------- */
+.pay-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 0 18px; border-radius: 12px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--ink); font: inherit; font-weight: 600; font-size: 15px; text-decoration: none; cursor: pointer; white-space: nowrap; }
+.pay-btn:hover { border-color: var(--ink-2); color: var(--ink); }
+.pay-btn:disabled { opacity: .55; cursor: not-allowed; }
+.pay-btn:focus-visible { outline: 3px solid var(--accent-soft); outline-offset: 2px; }
+.pay-btn-primary { background: var(--accent); border-color: var(--accent); color: var(--on-ink); }
+.pay-btn-primary:hover { background: var(--accent-link); border-color: var(--accent-link); color: var(--on-ink); }
+.pay-btn-danger { color: var(--danger-ink); }
+.pay-btn-danger:hover { border-color: var(--danger); color: var(--danger-ink); }
+.pay-btn-sm { min-height: 36px; padding: 0 14px; font-size: 14px; border-radius: 10px; }
+.pay-link-btn { border: 0; background: none; padding: 0; color: var(--accent-link); font: inherit; font-weight: 600; cursor: pointer; }
+.pay-link-btn:hover { text-decoration: underline; }
+
+/* ---- Layout ------------------------------------------------------------------------------------------------------ */
+.pay-sidebar { position: fixed; inset: 0 auto 0 0; width: var(--pay-sidebar-width); display: flex; flex-direction: column; padding: 28px 18px 18px; background: var(--surface-sunken); border-right: 1px solid var(--border); overflow-y: auto; z-index: 1020; }
+.pay-logo { display: flex; align-items: center; gap: 10px; margin: 0 8px 28px; font-family: var(--font-display); font-weight: 800; font-size: 20px; letter-spacing: -0.02em; color: var(--ink); }
+.pay-logo-circles { display: flex; }
+.pay-logo-circle { width: 22px; height: 22px; border-radius: 50%; background-color: var(--accent); }
+.pay-logo-circle + .pay-logo-circle { background-color: var(--teal); margin-left: -9px; mix-blend-mode: multiply; }
+.pay-nav-section { margin: 18px 12px 8px; font-size: 13px; font-weight: 500; color: var(--muted); }
+.pay-nav-section:first-child { margin-top: 0; }
+.pay-nav-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.pay-nav-link { display: flex; align-items: center; gap: 12px; padding: 11px 12px; border-radius: 12px; color: var(--ink-2); text-decoration: none; font-size: 15px; font-weight: 600; }
+.pay-nav-link:hover { color: var(--ink); background-color: var(--neutral-soft); }
+.pay-nav-link.active { background-color: var(--ink); color: var(--on-ink); }
+.pay-nav-link:focus-visible { outline: 3px solid var(--accent-soft); outline-offset: 1px; }
+.pay-sidebar-footer { margin-top: auto; padding-top: 24px; }
+.pay-provider-card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 14px 16px; }
+.pay-provider-card .pay-mono { display: block; margin-top: 8px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; }
+.pay-main { margin-left: var(--pay-sidebar-width); padding: 44px 40px 64px; min-height: 100vh; max-width: calc(var(--pay-sidebar-width) + 1240px); }
+.pay-main:focus { outline: none; }
+
+/* ---- Page header ------------------------------------------------------------------------------------------------- */
+.pay-page-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 16px; margin-bottom: 28px; }
+.pay-eyebrow { display: inline-flex; align-items: center; gap: 6px; margin: 0 0 8px; font-size: 15px; font-weight: 600; color: var(--accent-link); text-decoration: none; }
+.pay-eyebrow:hover { text-decoration: underline; color: var(--accent-link); }
+.pay-eyebrow-plain { color: var(--muted); }
+.pay-page-title { margin: 0 0 6px; font-family: var(--font-display); font-weight: 800; font-size: 44px; letter-spacing: -0.035em; line-height: 1.1; }
+.pay-page-subtitle { margin: 0; color: var(--ink-2); font-size: 17px; }
+.pay-page-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+/* ---- Cards, stats ------------------------------------------------------------------------------------------------ */
+.pay-card { background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 24px; margin-bottom: 20px; }
+.pay-card-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.pay-card-title { margin: 0; font-family: var(--font-display); font-weight: 700; font-size: 22px; letter-spacing: -0.015em; }
+.pay-card-sub { margin: 4px 0 0; color: var(--muted); font-size: 14.5px; }
+.pay-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 16px; margin-bottom: 24px; }
+.pay-stat { background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 20px 22px; min-width: 0; }
+.pay-stat-label { font-size: 13.5px; font-weight: 500; color: var(--ink-2); margin-bottom: 6px; }
+.pay-stat-value { font-family: var(--font-display); font-weight: 800; font-size: 30px; letter-spacing: -0.03em; line-height: 1.15; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.pay-stat-value.pay-teal { color: var(--teal); }
+.pay-stat-value.pay-danger { color: var(--danger); }
+.pay-stat-sub { font-size: 13px; color: var(--muted); margin-top: 4px; }
+.pay-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; align-items: start; }
+.pay-grid > .pay-col { min-width: 0; }
+
+/* ---- Toolbars, chips --------------------------------------------------------------------------------------------- */
+.pay-toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
+.pay-search { position: relative; flex: 1 1 240px; max-width: 360px; }
+.pay-search .bi { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--muted); }
+.pay-search input { padding-left: 38px; }
+.pay-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.pay-chip { border: 1px solid var(--border); background: var(--surface); color: var(--ink-2); border-radius: 999px; padding: 6px 14px; font-size: 14px; font-weight: 600; text-decoration: none; }
+.pay-chip:hover { border-color: var(--ink-2); color: var(--ink); }
+.pay-chip[aria-current="true"] { background: var(--ink); border-color: var(--ink); color: var(--on-ink); }
+.pay-chip-count { margin-left: 6px; font-weight: 500; opacity: .75; }
+.pay-segmented { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; padding: 4px; border-radius: 14px; background: var(--chip); }
+.pay-segmented input { position: absolute; opacity: 0; pointer-events: none; }
+.pay-segmented label { display: block; text-align: center; padding: 10px 12px; border-radius: 10px; font-weight: 600; font-size: 15px; color: var(--ink-2); cursor: pointer; }
+.pay-segmented input:checked + label { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-sm); }
+.pay-segmented input:focus-visible + label { outline: 3px solid var(--accent-soft); }
+
+/* ---- Tables ------------------------------------------------------------------------------------------------------ */
+.pay-table { width: 100%; margin: 0; }
+.pay-table thead th { font-size: 13px; font-weight: 500; color: var(--muted); border-bottom: 1px solid var(--border); padding: 10px 8px; white-space: nowrap; }
+.pay-table tbody td { padding: 14px 7px; border-bottom: 1px solid var(--divider); vertical-align: middle; font-size: 15px; white-space: nowrap; }
+.pay-table tbody td.pay-wrap { white-space: normal; min-width: 220px; }
+.pay-table tbody tr:last-child td { border-bottom: 0; }
+.pay-table tbody tr.pay-selected td { background: var(--accent-tint); }
+.pay-table-wrap { overflow-x: auto; margin: 0 -8px; }
+.pay-table .pay-num, .pay-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pay-strong { font-weight: 600; color: var(--ink); }
+.pay-sub, .pay-list-sub { display: block; font-size: 13px; color: var(--muted); }
+.pay-mono { font-family: var(--mono); font-size: 13px; }
+.pay-note { margin: 14px 0 0; color: var(--muted); font-size: 14px; }
+.pay-empty { padding: 28px 8px; text-align: center; color: var(--muted); margin: 0; }
+.pay-loading { color: var(--muted); }
+
+/* ---- Status pills ------------------------------------------------------------------------------------------------ */
+.pay-status { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px; font-size: 13px; font-weight: 600; background: var(--neutral-soft); color: var(--neutral-text); white-space: nowrap; }
+.pay-status-succeeded, .pay-status-paid, .pay-status-active, .pay-status-ok, .pay-status-resolved, .pay-status-processed, .pay-status-default { background: var(--teal-soft); color: var(--teal-text); }
+.pay-status-partially_refunded, .pay-status-open, .pay-status-processing, .pay-status-requires_action, .pay-status-trialing, .pay-status-pending, .pay-status-test { background: var(--warn-soft); color: var(--warn-ink); }
+.pay-status-failed, .pay-status-past_due, .pay-status-overdue, .pay-status-uncollectible, .pay-status-delinquent, .pay-status-live { background: var(--danger-soft); color: var(--danger-ink); }
+.pay-status-refunded, .pay-status-paused, .pay-status-void, .pay-status-cancelled, .pay-status-draft, .pay-status-inactive, .pay-status-closed { background: var(--neutral-soft); color: var(--neutral-text); }
+
+/* ---- Details panel ----------------------------------------------------------------------------------------------- */
+.pay-panel { position: sticky; top: 24px; }
+.pay-panel-amount { font-family: var(--font-display); font-weight: 800; font-size: 32px; letter-spacing: -0.03em; margin: 10px 0 2px; font-variant-numeric: tabular-nums; }
+.pay-kv { display: grid; grid-template-columns: auto 1fr; gap: 10px 16px; margin: 16px 0 0; padding-top: 16px; border-top: 1px solid var(--divider); font-size: 14.5px; }
+.pay-kv dt { color: var(--muted); font-weight: 500; }
+.pay-kv dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
+.pay-section-label { margin: 20px 0 10px; font-size: 13px; font-weight: 600; color: var(--muted); text-transform: none; }
+.pay-timeline { list-style: none; margin: 0; padding: 0 0 0 4px; }
+.pay-timeline li { position: relative; padding: 0 0 14px 22px; font-size: 14.5px; }
+.pay-timeline li::before { content: ''; position: absolute; left: 0; top: 6px; width: 10px; height: 10px; border-radius: 50%; background: var(--teal); }
+.pay-timeline li.pay-tl-bad::before { background: var(--danger); }
+.pay-timeline li.pay-tl-neutral::before { background: var(--neutral-dot); }
+.pay-timeline li::after { content: ''; position: absolute; left: 4px; top: 18px; bottom: 0; width: 2px; background: var(--divider); }
+.pay-timeline li:last-child::after { display: none; }
+.pay-code { margin: 0; padding: 12px 14px; border-radius: 12px; background: var(--surface-sunken); border: 1px solid var(--divider); font-family: var(--mono); font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink-2); }
+.pay-panel-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+.pay-panel-actions .pay-btn { flex: 1 1 auto; }
+
+/* ---- Refund ------------------------------------------------------------------------------------------------------ */
+.pay-choice-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 20px; }
+.pay-choice { position: relative; display: flex; gap: 12px; padding: 18px; border: 1px solid var(--border-strong); border-radius: 16px; background: var(--surface); cursor: pointer; }
+.pay-choice input { margin-top: 3px; width: 18px; height: 18px; accent-color: var(--accent); flex: none; }
+.pay-choice:has(input:checked) { border-color: var(--accent); background: var(--accent-tint); }
+.pay-choice:focus-within { outline: 3px solid var(--accent-soft); outline-offset: 1px; }
+.pay-choice strong { display: block; font-size: 16px; }
+.pay-choice span span { color: var(--ink-2); font-size: 14.5px; }
+.pay-form-foot { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 22px; padding-top: 20px; border-top: 1px dashed var(--border-strong); }
+.pay-alert { display: flex; gap: 10px; align-items: flex-start; border-radius: 14px; padding: 14px 16px; margin-bottom: 20px; font-size: 15px; }
+.pay-alert-ok { background: var(--teal-soft); color: var(--teal-text); }
+.pay-alert-warn { background: var(--warn-soft); color: var(--warn-ink); }
+.pay-alert-bad { background: var(--danger-soft); color: var(--danger-ink); }
+.pay-alert .bi { font-size: 18px; line-height: 1.3; }
+.pay-sum-row { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; font-size: 15px; color: var(--ink-2); }
+.pay-sum-row .pay-num { color: var(--ink); }
+.pay-sum-row.pay-sum-this { font-weight: 700; color: var(--ink); }
+.pay-sum-row.pay-sum-this .pay-num { color: var(--danger); }
+.pay-sum-total { display: flex; justify-content: space-between; align-items: baseline; margin-top: 10px; padding-top: 14px; border-top: 1px dashed var(--border-strong); font-weight: 700; }
+.pay-sum-total .pay-num { font-family: var(--font-display); font-weight: 800; font-size: 26px; letter-spacing: -0.02em; }
+.pay-hint { display: flex; gap: 10px; margin-top: 18px; padding: 14px 16px; border-radius: 14px; background: var(--chip); color: var(--ink-2); font-size: 14px; }
+.pay-list { list-style: none; margin: 0; padding: 0; }
+.pay-list > li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--divider); }
+.pay-list > li:first-child { border-top: 0; }
+
+/* ---- Forms in cards ---------------------------------------------------------------------------------------------- */
+.pay-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+.pay-field { margin-bottom: 18px; }
+.pay-preview { margin: 0; padding: 0; list-style: none; display: flex; gap: 8px; flex-wrap: wrap; }
+.pay-preview li { padding: 6px 12px; border-radius: 999px; background: var(--chip); font-size: 14px; font-weight: 600; color: var(--ink-2); }
+.pay-steps { margin: 0; padding-left: 20px; color: var(--ink-2); }
+.pay-steps li { margin-bottom: 8px; }
+.pay-steps code, .pay-card code { color: var(--accent-link); }
+
+/* ---- Toasts ------------------------------------------------------------------------------------------------------ */
+.pay-toasts { position: fixed; right: 20px; bottom: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 1100; }
+.pay-toast { background: var(--ink); color: var(--on-ink); padding: 12px 16px; border-radius: 12px; box-shadow: var(--shadow-lg); font-size: 14.5px; max-width: 380px; }
+.pay-toast.pay-toast-error { background: var(--danger); }
+
+/* ---- Small screens ----------------------------------------------------------------------------------------------- */
+@media (max-width: 1100px) {
+    .pay-grid { grid-template-columns: 1fr; }
+    .pay-panel { position: static; }
+}
+@media (max-width: 768px) {
+    .pay-sidebar { position: static; width: auto; min-height: 0; border-right: 0; border-bottom: 1px solid var(--border); padding: 14px 16px; }
+    .pay-logo { margin: 0 0 10px; }
+    .pay-nav { display: flex; flex-wrap: wrap; gap: 4px; }
+    .pay-nav-section { display: none; }
+    .pay-nav-list { flex-direction: row; flex-wrap: wrap; gap: 4px; display: contents; }
+    .pay-nav-link { padding: 7px 10px; font-size: 14px; gap: 6px; }
+    .pay-sidebar-footer { display: none; }
+    .pay-main { margin-left: 0; padding: 24px 16px 48px; }
+    .pay-page-title { font-size: 32px; }
+    .pay-choice-grid { grid-template-columns: 1fr; }
+    .pay-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .pay-stat { padding: 14px 16px; border-radius: 16px; }
+    .pay-stat-value { font-size: 22px; }
+    .pay-card { padding: 18px; }
+}

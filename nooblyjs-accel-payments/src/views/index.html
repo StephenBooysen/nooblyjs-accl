@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NooblyJS Pay</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link href="css/styles.css" rel="stylesheet">
+  <link href="css/payments.css" rel="stylesheet">
+</head>
+<body>
+  <a class="pay-skip" href="#pay-main">Skip to the content</a>
+  <aside class="pay-sidebar" aria-label="Main navigation">
+    <div class="pay-logo">
+      <span class="pay-logo-circles" aria-hidden="true"><span class="pay-logo-circle"></span><span class="pay-logo-circle"></span></span>
+      <span>NooblyJS Pay</span>
+    </div>
+    <nav class="pay-nav" aria-label="Payments">
+      <p class="pay-nav-section" id="nav-payments">Payments</p>
+      <ul class="pay-nav-list" aria-labelledby="nav-payments">
+        <li><a class="pay-nav-link" href="#/orders" data-pay-nav="orders"><i class="bi bi-bag-check" aria-hidden="true"></i>Orders &amp; payments</a></li>
+        <li><a class="pay-nav-link" href="#/refunds" data-pay-nav="refunds"><i class="bi bi-arrow-counterclockwise" aria-hidden="true"></i>Refunds</a></li>
+        <li><a class="pay-nav-link" href="#/recurring" data-pay-nav="recurring"><i class="bi bi-arrow-repeat" aria-hidden="true"></i>Recurring</a></li>
+        <li><a class="pay-nav-link" href="#/checkout" data-pay-nav="checkout"><i class="bi bi-window" aria-hidden="true"></i>Checkout page</a></li>
+      </ul>
+      <p class="pay-nav-section" id="nav-books">Books</p>
+      <ul class="pay-nav-list" aria-labelledby="nav-books">
+        <li><a class="pay-nav-link" href="#/overview" data-pay-nav="overview"><i class="bi bi-speedometer2" aria-hidden="true"></i>Overview</a></li>
+        <li><a class="pay-nav-link" href="#/accounts" data-pay-nav="accounts"><i class="bi bi-people" aria-hidden="true"></i>Accounts</a></li>
+        <li><a class="pay-nav-link" href="#/plans" data-pay-nav="plans"><i class="bi bi-tags" aria-hidden="true"></i>Plans</a></li>
+        <li><a class="pay-nav-link" href="#/issues" data-pay-nav="issues"><i class="bi bi-exclamation-triangle" aria-hidden="true"></i>Reconciliation</a></li>
+      </ul>
+      <p class="pay-nav-section" id="nav-setup">Setup</p>
+      <ul class="pay-nav-list" aria-labelledby="nav-setup">
+        <li><a class="pay-nav-link" href="#/setup" data-pay-nav="setup"><i class="bi bi-plug" aria-hidden="true"></i>Stripe connection</a></li>
+        <li><a class="pay-nav-link" href="#/webhooks" data-pay-nav="webhooks"><i class="bi bi-broadcast" aria-hidden="true"></i>Webhooks</a></li>
+        <li><a class="pay-nav-link" id="pay-api-link" href="api/v1/openapi.json" target="_blank" rel="noopener"><i class="bi bi-braces" aria-hidden="true"></i>API</a></li>
+      </ul>
+    </nav>
+    <div class="pay-sidebar-footer" id="pay-provider" aria-live="polite"></div>
+  </aside>
+  <main class="pay-main" id="pay-main" tabindex="-1"></main>
+  <div class="pay-toasts" id="pay-toasts" aria-live="polite"></div>
+  <script src="js/app.js" type="module"></script>
+</body>
+</html>

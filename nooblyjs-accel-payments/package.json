@@ -1,0 +1,40 @@
+{
+  "name": "nooblyjs-accel-payments",
+  "version": "0.1.0",
+  "description": "NooblyJS accelerator to charge customers: billing accounts, plans and metered prices, subscriptions, invoices, saved cards through a provider (mock, Stripe), dunning, refunds and a double-entry ledger.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./components/*": "./src/components/*"
+  },
+  "files": [
+    "index.js",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "test": "npm run test:express5 && npm run test:express4",
+    "test:express5": "node --test --test-timeout=60000 \"test/**/*.test.js\"",
+    "test:express4": "node --env-file=test/express4.env --test --test-timeout=60000 \"test/**/*.test.js\""
+  },
+  "peerDependencies": {
+    "express": "^4.18.0 || ^5.0.0",
+    "nooblyjs-core": ">=1.0.10"
+  },
+  "peerDependenciesMeta": {
+    "nooblyjs-core": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "express": "^5.2.1",
+    "express4": "npm:express@^4.21.2"
+  },
+  "author": "NooblyJS Team",
+  "license": "ISC"
+}
