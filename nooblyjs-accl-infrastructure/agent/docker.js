@@ -15,6 +15,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { caddyConfig, parseMetrics } from './ingress.js';
 import { createRelays } from './relay.js';
+import { firewallStatus } from './firewall.js';
 
 /** The runtime templates' base images, pinned by digest (spec 8.3.1; runtimes/bases.json, refreshed by a script). */
 const RUNTIMES_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'runtimes');
@@ -546,7 +547,7 @@ export function createDocker({ stateDir, docker = 'docker', git = 'git', caddyAd
 }
 
 /** This server's facts (R4). */
-export async function serverFacts({ docker = 'docker' } = {}) {
+export async function serverFacts({ docker = 'docker', stateDir = null } = {}) {
   const osRelease = await fs.readFile('/etc/os-release', 'utf8').catch(() => '');
   const pretty = /^PRETTY_NAME="?([^"\n]+)"?/m.exec(osRelease)?.[1] ?? `${os.type()} ${os.release()}`;
   const disk = await fs.statfs('/').catch(() => null);
@@ -571,5 +572,7 @@ export async function serverFacts({ docker = 'docker' } = {}) {
     security: { userns: /userns/.test(sec), rootless: /rootless/.test(sec), apparmor: /apparmor/.test(sec), seccomp: /seccomp/.test(sec) },
     systemd: await fs.readFile('/proc/1/comm', 'utf8').then((s) => s.trim() === 'systemd').catch(() => false),
     addresses,
+    // The egress firewall (R14), as its last apply left it; the controller warns operators when it is not applied.
+    egressFirewall: stateDir ? await firewallStatus(stateDir) : { applied: false, version: null, at: null },
   };
 }

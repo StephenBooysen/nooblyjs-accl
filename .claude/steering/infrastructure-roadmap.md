@@ -268,6 +268,7 @@ Needs only 8.1, so it can come before 8.2–8.5: it is the first real runtime (L
 - [x] 8.9.8 Environment through `resolveSecrets` and env files; never on a command line or in a log.
 - [x] 8.9.9 Logs and stats streaming into `telemetry.subscribe()` with cursors and resume.
 - [x] 8.9.10 `install.sh` (systemd, or foreground without it) and `noobly-agent` CLI; the opt-in real-Docker test.
+- [x] 8.9.11 R14 egress firewall: tenant containers and builds reach the internet, not the server or its private network (`test/agent-firewall.test.js`).
 
 **Exit check:** NooblyJS Cloud's seed story runs for real in one region: two tenants' web services (2 instances each)
 deploy from GitHub through a builder and the registry, serve on `*.<platformDomain>` through a rolling deploy with
