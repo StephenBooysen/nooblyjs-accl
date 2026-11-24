@@ -32,7 +32,7 @@
     "jsonwebtoken": "^9.0.3",
     "mime-types": "^3.0.1",
     "multer": "^2.0.0-rc.4",
-    "nooblyjs-core": "file:../../nooblyjs-core",
+    "nooblyjs-core": "file:../nooblyjs-core",
     "uuid": "^11.1.0"
   }
 }
